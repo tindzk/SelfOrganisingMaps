@@ -1,18 +1,26 @@
-#include "opencv2/opencv.hpp"
-#include "morph/display.h"
-#include "morph/tools.h"
-#include <utility>
-#include <iostream>
-#include <unistd.h>
-#include "morph/HexGrid.h"
-#include "morph/ReadCurves.h"
-#include "morph/RD_Base.h"
-#include "morph/RD_Plot.h"
+#include <opencv2/opencv.hpp>
+
+#include <morph/display.h>
+#include <morph/tools.h>
+#include <morph/HexGrid.h>
+#include <morph/ReadCurves.h>
+#include <morph/RD_Base.h>
+#include <morph/RD_Plot.h>
+
+#include <absl/algorithm/container.h>
+using absl::c_for_each;
+
+#include <absl/strings/str_format.h>
+using absl::PrintF;
+using absl::FPrintF;
+using absl::StrFormat;
+
+#include <absl/flags/flag.h>
+#include <absl/flags/parse.h>
+
 #include "topo.h"
 
 using namespace morph;
-using namespace std;
-
 
 /*** SPECIFIC MODEL DEFINED HERE ***/
 
@@ -25,16 +33,11 @@ class gcal : public Network {
         LGN<double> LGN_ON, LGN_OFF;
         CortexSOM<double> CX;
         vector<double> pref, sel;
-        bool homeostasis, plotSettling;
-        unsigned int settle;
+        bool homeostasis;
+        size_t settle;
         float beta, lambda, mu, thetaInit, xRange, yRange, afferAlpha, excitAlpha, inhibAlpha;
         float afferStrength, excitStrength, inhibStrength, LGNstrength, scale;
         float sigmaA, sigmaB, afferRadius, excitRadius, inhibRadius, afferSigma, excitSigma, inhibSigma, LGNCenterSigma, LGNSurroundSigma;
-
-
-    gcal(void){
-        plotSettling = false;
-    }
 
     void init(Json::Value root){
 
@@ -100,7 +103,7 @@ class gcal : public Network {
 
         LGN_ON.addProjection(IN.Xptr, IN.hg, afferRadius, +LGNstrength, 0.0, LGNCenterSigma, false);
         LGN_ON.addProjection(IN.Xptr, IN.hg, afferRadius, -LGNstrength, 0.0, LGNSurroundSigma, false);
-        for(unsigned int i=0;i<LGN_ON.Projections.size();i++){
+        for(size_t i=0;i<LGN_ON.Projections.size();i++){
             LGN_ON.Projections[i].renormalize();
         }
 
@@ -112,9 +115,7 @@ class gcal : public Network {
         LGN_OFF.addProjection(IN.Xptr, IN.hg, afferRadius, -LGNstrength, 0.0, LGNCenterSigma, false);
         LGN_OFF.addProjection(IN.Xptr, IN.hg, afferRadius, +LGNstrength, 0.0, LGNSurroundSigma, false);
 
-        for(unsigned int i=0;i<LGN_OFF.Projections.size();i++){
-            LGN_OFF.Projections[i].renormalize();
-        }
+        c_for_each(LGN_OFF.Projections, [](Projection<double> p) { p.renormalize(); });
 
         // CORTEX SHEET
         CX.beta = beta;
@@ -140,22 +141,21 @@ class gcal : public Network {
 
         pref.resize(CX.nhex,0.);
         sel.resize(CX.nhex,0.);
-
     }
 
     void stepAfferent(unsigned type){
         switch(type){
-            case(0):{ // Gaussians
+            case 0: { // Gaussians
                 IN.Gaussian(
                 (morph::Tools::randDouble()-0.5)*xRange,
                 (morph::Tools::randDouble()-0.5)*yRange,
                 morph::Tools::randDouble()*M_PI, sigmaA,sigmaB);
             } break;
-            case(1):{ // Preloaded
+            case 1: { // Preloaded
                 HCM.stepPreloaded();
                 IN.X = HCM.X;
             } break;
-            case(2):{ // Camera input
+            case 2: { // Camera input
                 HCM.stepCamera();
                 IN.X = HCM.X;
             } break;
@@ -182,10 +182,10 @@ class gcal : public Network {
 
     void stepCortex(void){
         CX.zero_X();
-        for(unsigned int j=0;j<settle;j++){
+        for(size_t j=0;j<settle;j++){
             CX.step();
         }
-        for(unsigned int p=0;p<CX.Projections.size();p++){ CX.Projections[p].learn(); }
+        c_for_each(CX.Projections, [](Projection<double> p) { p.learn(); });
         CX.renormalize();
         if (homeostasis){ CX.homeostasis(); }
         time++;
@@ -194,11 +194,11 @@ class gcal : public Network {
     void stepCortex(morph::Gdisplay disp){
         vector<double> fx(3,0.); RD_Plot<double> plt(fx,fx,fx);
         CX.zero_X();
-        for(unsigned int j=0;j<settle;j++){
+        for(size_t j=0;j<settle;j++){
             CX.step();
             plt.scalarfields (disp, CX.hg, CX.X);
         }
-        for(unsigned int p=0;p<CX.Projections.size();p++){ CX.Projections[p].learn(); }
+        c_for_each(CX.Projections, [](Projection<double> p) { p.learn(); });
         CX.renormalize();
         if (homeostasis){ CX.homeostasis(); }
         time++;
@@ -218,7 +218,7 @@ class gcal : public Network {
 
         disp.resetDisplay(vector<double> (3,0.),vector<double> (3,0.),vector<double> (3,0.));
         double maxSel = -1e9;
-        for(int i=0;i<CX.nhex;i++){
+        for(size_t i=0;i<CX.nhex;i++){
             if(sel[i]>maxSel){ maxSel = sel[i];}
         }
         maxSel = 1./maxSel;
@@ -234,36 +234,36 @@ class gcal : public Network {
     }
 
     void map (void){
-        int nOr=20;
-        int nPhase=8;
-        double phaseInc = M_PI/(double)nPhase;
+        size_t nOr=20;
+        size_t nPhase=8;
+        auto phaseInc = M_PI/(double)nPhase;
         vector<int> maxIndOr(CX.nhex,0);
         vector<double> maxValOr(CX.nhex,-1e9);
         vector<double> maxPhase(CX.nhex,0.);
         vector<double> Vx(CX.nhex);
         vector<double> Vy(CX.nhex);
         vector<int> aff(2,0); aff[1]=1;
-        for(unsigned int i=0;i<nOr;i++){
+        for(size_t i=0;i<nOr;i++){
             double theta = i*M_PI/(double)nOr;
             std::fill(maxPhase.begin(),maxPhase.end(),-1e9);
-            for(unsigned int j=0;j<nPhase;j++){
+            for(size_t j=0;j<nPhase;j++){
                 double phase = j*phaseInc;
                 IN.Grating(theta,phase,30.0,1.0);
                 LGN_ON.step();
                 LGN_OFF.step();
                 CX.zero_X();
                 CX.step(aff);
-                for(int k=0;k<maxPhase.size();k++){
+                for(size_t k=0;k<maxPhase.size();k++){
                     if(maxPhase[k]<CX.X[k]){ maxPhase[k] = CX.X[k]; }
                 }
             }
 
-            for(int k=0;k<maxPhase.size();k++){
+            for(size_t k=0;k<maxPhase.size();k++){
                 Vx[k] += maxPhase[k] * cos(2.0*theta);
                 Vy[k] += maxPhase[k] * sin(2.0*theta);
             }
 
-            for(int k=0;k<maxPhase.size();k++){
+            for(size_t k=0;k<maxPhase.size();k++){
                 if(maxValOr[k]<maxPhase[k]){
                     maxValOr[k]=maxPhase[k];
                     maxIndOr[k]=i;
@@ -271,7 +271,7 @@ class gcal : public Network {
             }
         }
 
-        for(int i=0;i<maxValOr.size();i++){
+        for(size_t i=0;i<maxValOr.size();i++){
             pref[i] = 0.5*(atan2(Vy[i],Vx[i])+M_PI);
             sel[i] = sqrt(Vy[i]*Vy[i]+Vx[i]*Vx[i]);
         }
@@ -282,8 +282,8 @@ class gcal : public Network {
         HdfData data(fname.str());
         vector<int> timetmp(1,time);
         data.add_contained_vals ("time", timetmp);
-        for(unsigned int p=0;p<CX.Projections.size();p++){
-            vector<double> proj = CX.Projections[p].getWeights();
+        for(size_t p=0;p<CX.Projections.size();p++){
+            auto proj = CX.Projections[p].getWeights();
             stringstream ss; ss<<"proj_"<<p;
             data.add_contained_vals (ss.str().c_str(), proj);
         }
@@ -295,45 +295,50 @@ class gcal : public Network {
         vector<int> timetmp;
         data.read_contained_vals ("time", timetmp);
         time = timetmp[0];
-        for(unsigned int p=0;p<CX.Projections.size();p++){
+        for(size_t p=0;p<CX.Projections.size();p++){
             vector<double> proj;
             stringstream ss; ss<<"proj_"<<p;
             data.read_contained_vals (ss.str().c_str(), proj);
             CX.Projections[p].setWeights(proj);
         }
-        cout<<"Loaded weights and modified time to " << time << endl;
+        absl::PrintF("Loaded weights and modified time to %i", time);
     }
 
     ~gcal(void){ }
-
 };
-
-
 
 
 /*** MAIN PROGRAM ***/
 
+ABSL_FLAG(std::string, configFile, "configs/config.json", "Configuration file");
+ABSL_FLAG(int, seed, 1, "Seed");
+ABSL_FLAG(int, mode, 1, "Mode");
+ABSL_FLAG(int, input, 0, "Input (0 = Gaussian, 1 = Loaded, 2 = Camera input)");
+ABSL_FLAG(std::string, weightFile, "", "Weight file");
 
-int main(int argc, char **argv){
+int main(int argc, char **argv) {
+    absl::ParseCommandLine(argc, argv);
 
-    if (argc < 5) { cerr << "\nUsage: ./test configfile seed mode intype weightfile(optional)\n\n"; return -1; }
-
-    string paramsfile (argv[1]);
-    srand(stoi(argv[2]));       // set seed
-    int MODE = stoi(argv[3]);
-    int INTYPE = stoi(argv[4]); // 0,1,2 Gaussian,Loaded,Camera input
+    auto paramsfile = absl::GetFlag(FLAGS_configFile);
+    auto seed = absl::GetFlag(FLAGS_seed);
+    srand(seed);       // set seed
+    auto MODE = absl::GetFlag(FLAGS_mode);
+    auto INTYPE = absl::GetFlag(FLAGS_input);
 
     //  Set up JSON code for reading the parameters
-    ifstream jsonfile_test;
+    std::ifstream jsonfile_test;
     int srtn = system ("pwd");
-    if (srtn) { cerr << "system call returned " << srtn << endl; }
+    if (srtn) FPrintF(stderr, "system call returned %s\n", srtn);
 
-    jsonfile_test.open (paramsfile, ios::in);
-    if (jsonfile_test.is_open()) { jsonfile_test.close(); // Good, file exists.
-    } else { cerr << "json config file " << paramsfile << " not found." << endl; return 1; }
+    jsonfile_test.open (paramsfile, std::ios::in);
+    if (jsonfile_test.is_open()) jsonfile_test.close(); // Good, file exists.
+    else {
+        FPrintF(stderr, "JSON configuration file %s not found.\n", paramsfile);
+        return 1;
+    }
 
     // Parse the JSON
-    ifstream jsonfile (paramsfile, ifstream::binary);
+    std::ifstream jsonfile (paramsfile, std::ifstream::binary);
     Json::Value root;
     string errs;
     Json::CharReaderBuilder rbuilder;
@@ -341,8 +346,8 @@ int main(int argc, char **argv){
     bool parsingSuccessful = Json::parseFromStream (rbuilder, jsonfile, &root, &errs);
     if (!parsingSuccessful) { cerr << "Failed to parse JSON: " << errs; return 1; }
 
-    unsigned int nBlocks = root.get ("blocks", 100).asUInt();
-    unsigned int steps = root.get ("steps", 100).asUInt();
+    size_t nBlocks = root.get ("blocks", 100).asUInt();
+    size_t steps = root.get ("steps", 100).asUInt();
 
     // Creates the network
     gcal Net;
@@ -371,81 +376,77 @@ int main(int argc, char **argv){
         } break;
     }
 
-    if(argc>5){
-        cout<<"Using weight file: "<<argv[5]<<endl;
-        Net.load(argv[5]);
-    } else {
-        cout<<"Using random weights"<<endl;
+    auto weightFile = absl::GetFlag(FLAGS_weightFile);
+    if (weightFile.empty()) PrintF("Using random weights");
+    else {
+        PrintF("Using weight file: %s", weightFile);
+        Net.load(weightFile);
     }
 
     switch(MODE){
-
-        case(0): { // No plotting
-            for(int b=0;b<nBlocks;b++){
+        case 0: { // No plotting
+            for (size_t b = 0; b < nBlocks; b++) {
                 Net.map();
-                for(unsigned int i=0;i<steps;i++){
+                for (size_t i = 0; i < steps; i++) {
                     Net.stepAfferent(INTYPE);
                     Net.stepCortex();
                 }
-                stringstream ss; ss << "weights_" << Net.time << ".h5";
-                Net.save(ss.str());
+                Net.save(StrFormat("weights_%i.h5", Net.time));
             }
-        } break;
+        }
+        break;
 
-        case(1): { // Plotting
-            vector<morph::Gdisplay> displays;
+        case 1: { // Plotting
+            vector <morph::Gdisplay> displays;
             displays.push_back(morph::Gdisplay(600, 600, 0, 0, "Input Activity", 1.7, 0.0, 0.0));
             displays.push_back(morph::Gdisplay(600, 600, 0, 0, "Cortical Activity", 1.7, 0.0, 0.0));
             displays.push_back(morph::Gdisplay(1200, 400, 0, 0, "Cortical Projection", 1.7, 0.0, 0.0));
             displays.push_back(morph::Gdisplay(600, 300, 0, 0, "LGN ON/OFF", 1.7, 0.0, 0.0));
             displays.push_back(morph::Gdisplay(600, 600, 0, 0, "Map", 1.7, 0.0, 0.0));
-            for(unsigned int i=0;i<displays.size();i++){
-                displays[i].resetDisplay (vector<double>(3,0),vector<double>(3,0),vector<double>(3,0));
-                displays[i].redrawDisplay();
-            }
-            for(int b=0;b<nBlocks;b++){
+            c_for_each(displays, [](morph::Gdisplay d) {
+                d.resetDisplay(vector<double>(3, 0), vector<double>(3, 0), vector<double>(3, 0));
+                d.redrawDisplay();
+            });
+            for (size_t b = 0; b < nBlocks; b++) {
                 Net.map();
                 Net.plotMap(displays[4]);
-                for(unsigned int i=0;i<steps;i++){
+                for (size_t i = 0; i < steps; i++) {
                     Net.stepAfferent(INTYPE);
-                    Net.plotAfferent(displays[0],displays[3]);
+                    Net.plotAfferent(displays[0], displays[3]);
                     Net.stepCortex(displays[1]);
-                    Net.plotWeights(displays[2],500);
+                    Net.plotWeights(displays[2], 500);
                 }
-                stringstream ss; ss << "weights_" << Net.time << ".h5";
-                Net.save(ss.str());
+                Net.save(StrFormat("weights_%i.h5", Net.time));
             }
-            for(unsigned int i=0;i<displays.size();i++){
-                displays[i].closeDisplay();
-            }
-        } break;
+            c_for_each(displays, [](morph::Gdisplay d) { d.closeDisplay(); });
+        }
+        break;
 
-        case(2): { // Map only
-            vector<morph::Gdisplay> displays;
+        case 2: {// Map only
+            vector <morph::Gdisplay> displays;
             displays.push_back(morph::Gdisplay(600, 600, 0, 0, "Input Activity", 1.7, 0.0, 0.0));
             displays.push_back(morph::Gdisplay(600, 600, 0, 0, "Cortical Activity", 1.7, 0.0, 0.0));
             displays.push_back(morph::Gdisplay(1200, 400, 0, 0, "Cortical Projection", 1.7, 0.0, 0.0));
             displays.push_back(morph::Gdisplay(600, 300, 0, 0, "LGN ON/OFF", 1.7, 0.0, 0.0));
             displays.push_back(morph::Gdisplay(600, 600, 0, 0, "Map", 1.7, 0.0, 0.0));
-            for(unsigned int i=0;i<displays.size();i++){
-                displays[i].resetDisplay (vector<double>(3,0),vector<double>(3,0),vector<double>(3,0));
-                displays[i].redrawDisplay();
-            }
+            c_for_each(displays, [](morph::Gdisplay d) {
+                d.resetDisplay(vector<double>(3, 0), vector<double>(3, 0), vector<double>(3, 0));
+                d.redrawDisplay();
+            });
             Net.map();
             Net.plotMap(displays[4]);
             Net.stepAfferent(INTYPE);
-            Net.plotAfferent(displays[0],displays[3]);
+            Net.plotAfferent(displays[0], displays[3]);
             Net.stepCortex(displays[1]);
-            Net.plotWeights(displays[2],500);
-            for(unsigned int i=0;i<displays.size();i++){
+            Net.plotWeights(displays[2], 500);
+            c_for_each(displays, [](morph::Gdisplay d) {});
+            for (size_t i = 0; i < displays.size(); i++) {
                 displays[i].redrawDisplay();
-                stringstream ss; ss << "plot_" << Net.time << "_" << i << ".png";
-                displays[i].saveImage(ss.str());
+                displays[i].saveImage(StrFormat("plot_%i_%i.png", Net.time, i));
             }
-            for(unsigned int i=0;i<displays.size();i++){
-                displays[i].closeDisplay();
-            }
-        } break;
+            c_for_each(displays, [](morph::Gdisplay d) { d.closeDisplay(); });
+        }
+        break;
     }
 
     return 0.;

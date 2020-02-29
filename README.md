@@ -2,7 +2,7 @@
 
 Implementation of GCAL model reported in Stevens et al., (2013) J. Neurosci. paper.
 
-First install [morphologica](https://github.com/ABRG-Models/morphologica), then build in the usual cmake way:
+First install [morphologica](https://github.com/ABRG-Models/morphologica) and [Abseil](https://abseil.io/), then build in the usual cmake way:
 
 ```shell
 mkdir build

@@ -1,20 +1,15 @@
-#include "opencv2/opencv.hpp"
-#include "morph/display.h"
-#include "morph/tools.h"
-#include <utility>
-#include <iostream>
-#include <unistd.h>
-#include "morph/HexGrid.h"
-#include "morph/ReadCurves.h"
-#include "morph/RD_Base.h"
-# include "morph/RD_Plot.h"
+#include <opencv2/opencv.hpp>
+#include <morph/display.h>
+#include <morph/tools.h>
+#include <morph/HexGrid.h>
+#include <morph/ReadCurves.h>
+#include <morph/RD_Base.h>
+#include <morph/RD_Plot.h>
 
 using namespace cv;
 using namespace morph;
-using namespace std;
 
 using morph::RD_Plot;
-
 
 class Network{
 
@@ -100,8 +95,8 @@ public:
 
     // initialize connections for each destination sheet unit
     #pragma omp parallel for
-        for(unsigned int i=0;i<nDst;i++){
-            for(unsigned int j=0;j<nSrc;j++){
+        for(size_t i=0;i<nDst;i++){
+            for(size_t j=0;j<nSrc;j++){
                 Flt dx = (hgSrc->vhexen[j]->x-hgDst->vhexen[i]->x);
                 Flt dy = (hgSrc->vhexen[j]->y-hgDst->vhexen[i]->y);
                 Flt distSquared = dx*dx+dy*dy;
@@ -130,9 +125,9 @@ public:
         Dot product of each weight vector with the corresponding source sheet field values, multiplied by the strength of the projection
     */
 #pragma omp parallel for
-        for(unsigned int i=0;i<nDst;i++){
+        for(size_t i=0;i<nDst;i++){
             field[i] = 0.;
-                for(unsigned int j=0;j<counts[i];j++){
+                for(size_t j=0;j<counts[i];j++){
                     field[i] += *fSrc[srcId[i][j]]*weights[i][j];
                 }
         field[i] *= strength;
@@ -145,8 +140,8 @@ public:
     */
     if(alpha>0.0){
     #pragma omp parallel for
-        for(unsigned int i=0;i<nDst;i++){
-            for(unsigned int j=0;j<counts[i];j++){
+        for(size_t i=0;i<nDst;i++){
+            for(size_t j=0;j<counts[i];j++){
                 weights[i][j] += *fSrc[srcId[i][j]] * *fDst[i] * alphas[i];
             }
         }
@@ -155,8 +150,8 @@ public:
 
     vector<Flt> getWeights(void){
         vector<Flt> weightStore;
-        for(unsigned int i=0;i<nDst;i++){
-            for(unsigned int j=0;j<counts[i];j++){
+        for(size_t i=0;i<nDst;i++){
+            for(size_t j=0;j<counts[i];j++){
                 weightStore.push_back(weights[i][j]);
             }
         }
@@ -165,8 +160,8 @@ public:
 
     void setWeights(vector<Flt> weightStore){
         int k=0;
-        for(unsigned int i=0;i<nDst;i++){
-            for(unsigned int j=0;j<counts[i];j++){
+        for(size_t i=0;i<nDst;i++){
+            for(size_t j=0;j<counts[i];j++){
                 weights[i][j] = weightStore[k];
                 k++;
             }
@@ -176,12 +171,12 @@ public:
     void renormalize(void){
 
     #pragma omp parallel for
-        for(unsigned int i=0;i<nDst;i++){
+        for(size_t i=0;i<nDst;i++){
         Flt sumWeights = 0.0;
-            for(unsigned int j=0;j<counts[i];j++){
+            for(size_t j=0;j<counts[i];j++){
                 sumWeights += weights[i][j];
             }
-            for(unsigned int j=0;j<counts[i];j++){
+            for(size_t j=0;j<counts[i];j++){
                 weights[i][j] /= sumWeights;
             }
         }
@@ -189,7 +184,7 @@ public:
 
     void multiplyWeights(int i, double scale){
     #pragma omp parallel for
-        for(unsigned int j=0;j<counts[i];j++){
+        for(size_t j=0;j<counts[i];j++){
             weights[i][j] *= scale;
         }
     }
@@ -197,11 +192,11 @@ public:
     vector<double> getWeightPlot(int i){
 
         #pragma omp parallel for
-        for(unsigned int j=0;j<weightPlot.size();j++){
+        for(size_t j=0;j<weightPlot.size();j++){
             weightPlot[j] = 0.;
         }
         #pragma omp parallel for
-        for(unsigned int j=0;j<counts[i];j++){
+        for(size_t j=0;j<counts[i];j++){
             weightPlot[srcId[i][j]] = weights[i][j];
         }
         return weightPlot;
@@ -245,9 +240,9 @@ public:
     }
 
     void setNormalize(vector<int> proj){
-    for(unsigned int p=0; p<proj.size();p++){
-        for(unsigned int i=0; i<this->P.size();i++){
-            for(unsigned int j=0; j<this->P[i].size();j++){
+    for(size_t p=0; p<proj.size();p++){
+        for(size_t i=0; i<this->P.size();i++){
+            for(size_t j=0; j<this->P[i].size();j++){
                 if(proj[p]==this->P[i][j]){
                     cout<<"Caution - projection may be mutiply joint normalized"<<endl;
                 }
@@ -259,17 +254,17 @@ public:
 
  void renormalize(void){
 
-    for(unsigned int proj=0;proj<this->P.size();proj++){
+    for(size_t proj=0;proj<this->P.size();proj++){
     #pragma omp parallel for
-        for(unsigned int i=0;i<this->nhex;i++){
+        for(size_t i=0;i<this->nhex;i++){
             Flt sumWeights = 0.0;
-            for(unsigned int p=0;p<this->P[proj].size();p++){
-                for(unsigned int j=0;j<this->Projections[this->P[proj][p]].counts[i];j++){
+            for(size_t p=0;p<this->P[proj].size();p++){
+                for(size_t j=0;j<this->Projections[this->P[proj][p]].counts[i];j++){
                     sumWeights += this->Projections[this->P[proj][p]].weights[i][j];
                 }
             }
-            for(unsigned int p=0;p<this->P[proj].size();p++){
-                for(unsigned int j=0;j<this->Projections[this->P[proj][p]].counts[i];j++){
+            for(size_t p=0;p<this->P[proj].size();p++){
+                for(size_t j=0;j<this->Projections[this->P[proj][p]].counts[i];j++){
                     this->Projections[this->P[proj][p]].weights[i][j] /= sumWeights;
                 }
             }
@@ -293,11 +288,11 @@ public:
     virtual void step (void) {
         this->stepCount++;
         this->zero_X();
-        for(unsigned int i=0;i<this->Projections.size();i++){
+        for(size_t i=0;i<this->Projections.size();i++){
             this->Projections[i].getWeightedSum();
         }
 
-        for(unsigned int i=0;i<this->Projections.size();i++){
+        for(size_t i=0;i<this->Projections.size();i++){
             #pragma omp parallel for
             for (unsigned int hi=0; hi<this->nhex; ++hi) {
                 this->X[hi] += this->Projections[i].field[hi];
@@ -362,13 +357,13 @@ class CortexSOM : public RD_Sheet<Flt>
     virtual void step (void) {
         this->stepCount++;
 
-        for(unsigned int i=0;i<this->Projections.size();i++){
+        for(size_t i=0;i<this->Projections.size();i++){
             this->Projections[i].getWeightedSum();
         }
 
         this->zero_X();
 
-        for(unsigned int i=0;i<this->Projections.size();i++){
+        for(size_t i=0;i<this->Projections.size();i++){
         #pragma omp parallel for
             for (unsigned int hi=0; hi<this->nhex; ++hi) {
                 this->X[hi] += this->Projections[i].field[hi];
@@ -387,13 +382,13 @@ class CortexSOM : public RD_Sheet<Flt>
 virtual void step (vector<int> projectionIDs) {
         this->stepCount++;
 
-        for(unsigned int i=0;i<projectionIDs.size();i++){
+        for(size_t i=0;i<projectionIDs.size();i++){
             this->Projections[projectionIDs[i]].getWeightedSum();
         }
 
         this->zero_X();
 
-        for(unsigned int i=0;i<projectionIDs.size();i++){
+        for(size_t i=0;i<projectionIDs.size();i++){
         #pragma omp parallel for
             for (unsigned int hi=0; hi<this->nhex; ++hi) {
                 this->X[hi] += this->Projections[projectionIDs[i]].field[hi];
@@ -484,7 +479,7 @@ vector<double> getPolyPixelVals(Mat frame, vector<Point> pp){
     vector<Point2i> positives;
     findNonZero(resultGray, positives);
     vector<double> polyPixelVals(positives.size());
-    for(int j=0;j<positives.size();j++){
+    for(size_t j=0;j<positives.size();j++){
         Scalar pixel = resultGray.at<uchar>(positives[j]);
         polyPixelVals[j] = (double)pixel.val[0]/255.;
     }
@@ -585,8 +580,8 @@ public:
         Flt radiusSquared = radius*radius;    // precompute for speed
         Flt OverTwoSigmaSquared = 1./(2.0*sigma*sigma);
         #pragma omp parallel for
-        for(unsigned int i=0;i<this->nhex;i++){
-            for(unsigned int j=0;j<C.n;j++){
+        for(size_t i=0;i<this->nhex;i++){
+            for(int j=0;j<C.n;j++){
                 Flt dx = (this->hg->vhexen[i]->x-C.vsquare[j].x);
                 Flt dy = (this->hg->vhexen[i]->y-C.vsquare[j].y);
                 Flt distSquared = dx*dx+dy*dy;
@@ -602,7 +597,7 @@ public:
                 }
             }
             norms[i] = 1.0/(Flt)counts[i];
-            for(unsigned int j=0;j<counts[i];j++){
+            for(size_t j=0;j<counts[i];j++){
                 weights[i][j] *= norms[i];
             }
         }
@@ -622,8 +617,8 @@ public:
     virtual void step (void) {
         this->zero_X();
         #pragma omp parallel for
-        for(unsigned int i=0;i<this->nhex;i++){
-            for(unsigned int j=0;j<counts[i];j++){
+        for(size_t i=0;i<this->nhex;i++){
+            for(size_t j=0;j<counts[i];j++){
                 this->X[i] += C.vsquare[srcId[i][j]].X*weights[i][j];
             }
             this->X[i] *= strength;
