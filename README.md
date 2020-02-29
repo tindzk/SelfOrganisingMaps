@@ -18,7 +18,7 @@ Then run model using e.g.:
 
 ```shell
 export LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
-build/sim/gcal configs/config.json 1 1 2
+build/sim/gcal configs/config.json --seed=1 --mode=1 --input=2
 ```
 
 The final 3 numbers are:

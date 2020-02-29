@@ -11,12 +11,11 @@ using namespace morph;
 
 using morph::RD_Plot;
 
+/**
+  * High-level wrapper for specifying a network so that a simulation can be built by calling the methods (e.g.,
+  * step/map) in a given order.
+  */
 class Network {
-
-    /*
-        High-level wrapper for specifying a network so that a simulation can be built by calling the methods (e.g., step/map) in a given order.
-    */
-
 public:
     int time;
 
@@ -27,55 +26,43 @@ public:
     virtual void init(Json::Value) {
 
     }
-
 };
 
-
+/**
+ * A projection class for connecting units on a source sheet to units on a destination sheet with topographically
+ * aligned weighted connections from a radius of units on the source sheet to each destination sheet unit.
+ */
 template<class Flt>
 class Projection {
-
-/*
-    A projection class for connecting units on a source sheet to units on a destination sheet with topographically aligned weighted connections from a radius of units on the source sheet to each destination sheet unit.
-*/
-
 public:
-
-    HexGrid *hgSrc;
-    HexGrid *hgDst;
-    Flt radius;                     // radius within which connections are made
     Flt strength;                   // strength of projection - multiplication after dot products
     Flt alpha;                      // learning rate
-    unsigned int nSrc;              // number of units on source sheet
-    unsigned int nDst;              // number of units on destination sheet
+    size_t nSrc;              // number of units on source sheet
+    size_t nDst;              // number of units on destination sheet
 
-    vector<unsigned int> counts;                // number of connections in connection field for each unit
+    vector<size_t> counts;                // number of connections in connection field for each unit
     vector<Flt> norms;                // 1./counts
     vector<Flt> alphas;                // learning rates for each unit may depend on e.g., the number of connections
-    vector<vector<unsigned int> > srcId;            // identity of conneted units on the source sheet
+    vector<vector<size_t> > srcId;            // identity of connected units on the source sheet
     vector<vector<Flt> > weights;        // connection weights
     vector<vector<Flt> > distances;        // pre-compute distances between units in source and destination sheets
     vector<Flt> field;                // current activity patterns
     vector<Flt *> fSrc;                // pointers to the field elements on the source sheet
     vector<Flt *> fDst;                // pointers to the field elements on the destination sheet
     vector<double> weightPlot;            // for constructing activity plots
-    bool normalizeAlphas;            // whether to normalize learning rate by individual unit connection density
 
-
+    /**
+     * Initialise the class with random weights (if sigma>0, the weights have a Gaussian pattern, else uniform random)
+     *
+     * @param radius radius within which connections are made
+     * @param normalizeAlphas whether to normalize learning rate by individual unit connection density
+     */
     Projection(vector<Flt *> fSrc, vector<Flt *> fDst, HexGrid *hgSrc, HexGrid *hgDst, Flt radius, Flt strength,
                Flt alpha, Flt sigma, bool normalizeAlphas) {
-
-        /*
-            Initialise the class with random weights (if sigma>0, the weights have a Gaussian pattern, else uniform random)
-        */
-
         this->fSrc = fSrc;
         this->fDst = fDst;
-        this->hgSrc = hgSrc;
-        this->hgDst = hgDst;
-        this->radius = radius;
         this->strength = strength;
         this->alpha = alpha;
-        this->normalizeAlphas = normalizeAlphas;
 
         nDst = hgDst->vhexen.size();
         nSrc = hgSrc->vhexen.size();
@@ -116,14 +103,13 @@ public:
             if (normalizeAlphas) {
                 alphas[i] *= norms[i];
             }
-
         }
     }
 
+    /* Dot product of each weight vector with the corresponding source sheet field values, multiplied by the strength of
+     * the projection
+     */
     void getWeightedSum(void) {
-        /*
-            Dot product of each weight vector with the corresponding source sheet field values, multiplied by the strength of the projection
-        */
 #pragma omp parallel for
         for (size_t i = 0; i < nDst; i++) {
             field[i] = 0.;
@@ -134,10 +120,8 @@ public:
         }
     }
 
+    /* Hebbian adaptation of the weights */
     void learn(void) {
-        /*
-         Hebbian adaptation of the weights
-        */
         if (alpha > 0.0) {
 #pragma omp parallel for
             for (size_t i = 0; i < nDst; i++) {
@@ -169,7 +153,6 @@ public:
     }
 
     void renormalize(void) {
-
 #pragma omp parallel for
         for (size_t i = 0; i < nDst; i++) {
             Flt sumWeights = 0.0;
@@ -190,7 +173,6 @@ public:
     }
 
     vector<double> getWeightPlot(int i) {
-
 #pragma omp parallel for
         for (size_t j = 0; j < weightPlot.size(); j++) {
             weightPlot[j] = 0.;
@@ -201,14 +183,11 @@ public:
         }
         return weightPlot;
     }
-
 };
-
 
 template<class Flt>
 class RD_Sheet : public morph::RD_Base<Flt> {
 public:
-
     vector<Projection<Flt>> Projections;
     alignas(alignof(vector<Flt>)) vector<Flt> X;
     alignas(alignof(vector<Flt *>)) vector<Flt *> Xptr;
@@ -222,7 +201,7 @@ public:
     virtual void allocate(void) {
         morph::RD_Base<Flt>::allocate();
         this->resize_vector_variable(this->X);
-        for (unsigned int hi = 0; hi < this->nhex; ++hi) {
+        for (size_t hi = 0; hi < this->nhex; ++hi) {
             Xptr.push_back(&this->X[hi]);
         }
     }
@@ -235,16 +214,16 @@ public:
 
     void zero_X(void) {
 #pragma omp parallel for
-        for (unsigned int hi = 0; hi < this->nhex; ++hi) {
+        for (size_t hi = 0; hi < this->nhex; ++hi) {
             this->X[hi] = 0.;
         }
     }
 
     void setNormalize(vector<int> proj) {
-        for (size_t p = 0; p < proj.size(); p++) {
+        for (int &p : proj) {
             for (size_t i = 0; i < this->P.size(); i++) {
                 for (size_t j = 0; j < this->P[i].size(); j++) {
-                    if (proj[p] == this->P[i][j]) {
+                    if (p == this->P[i][j]) {
                         cout << "Caution - projection may be mutiply joint normalized" << endl;
                     }
                 }
@@ -254,7 +233,6 @@ public:
     }
 
     void renormalize(void) {
-
         for (size_t proj = 0; proj < this->P.size(); proj++) {
 #pragma omp parallel for
             for (size_t i = 0; i < this->nhex; i++) {
@@ -272,19 +250,11 @@ public:
             }
         }
     }
-
 };
 
 template<class Flt>
 class LGN : public RD_Sheet<Flt> {
-
 public:
-    Flt strength;
-
-    LGN(void) {
-        this->strength = 1.0;
-    }
-
     virtual void step(void) {
         this->stepCount++;
         this->zero_X();
@@ -294,41 +264,25 @@ public:
 
         for (size_t i = 0; i < this->Projections.size(); i++) {
 #pragma omp parallel for
-            for (unsigned int hi = 0; hi < this->nhex; ++hi) {
+            for (size_t hi = 0; hi < this->nhex; ++hi) {
                 this->X[hi] += this->Projections[i].field[hi];
             }
         }
 #pragma omp parallel for
-        for (unsigned int hi = 0; hi < this->nhex; ++hi) {
+        for (size_t hi = 0; hi < this->nhex; ++hi) {
             this->X[hi] = fmax(this->X[hi], 0.);
         }
     }
-
 };
 
 
 template<class Flt>
 class CortexSOM : public RD_Sheet<Flt> {
 public:
-
     Flt beta, lambda, mu, oneMinusBeta, thetaInit;
 
     alignas(alignof(vector<Flt>)) vector<Flt> Xavg;
     alignas(alignof(vector<Flt>)) vector<Flt> Theta;
-
-    CortexSOM(void) {
-
-    }
-
-    /*
-    void init (Flt beta, Flt lambda, Flt mu, Flt thetaInit){
-        this->beta = beta;
-        this->lambda = lambda;
-        this->mu = mu;
-        this->thetaInit = thetaInit;
-
-    }
-    */
 
     virtual void init(void) {
         oneMinusBeta = (1. - beta);
@@ -343,15 +297,14 @@ public:
         this->resize_vector_variable(this->X);
         this->resize_vector_variable(this->Xavg);
         this->resize_vector_variable(this->Theta);
-        for (unsigned int hi = 0; hi < this->nhex; ++hi) {
+        for (size_t hi = 0; hi < this->nhex; ++hi) {
             this->Xptr.push_back(&this->X[hi]);
         }
-        for (unsigned int hi = 0; hi < this->nhex; ++hi) {
+        for (size_t hi = 0; hi < this->nhex; ++hi) {
             this->Xavg[hi] = mu;
             this->Theta[hi] = thetaInit;
         }
     }
-
 
     virtual void step(void) {
         this->stepCount++;
@@ -364,13 +317,13 @@ public:
 
         for (size_t i = 0; i < this->Projections.size(); i++) {
 #pragma omp parallel for
-            for (unsigned int hi = 0; hi < this->nhex; ++hi) {
+            for (size_t hi = 0; hi < this->nhex; ++hi) {
                 this->X[hi] += this->Projections[i].field[hi];
             }
         }
 
 #pragma omp parallel for
-        for (unsigned int hi = 0; hi < this->nhex; ++hi) {
+        for (size_t hi = 0; hi < this->nhex; ++hi) {
             this->X[hi] = this->X[hi] - this->Theta[hi];
             if (this->X[hi] < 0.0) {
                 this->X[hi] = 0.0;
@@ -389,13 +342,13 @@ public:
 
         for (size_t i = 0; i < projectionIDs.size(); i++) {
 #pragma omp parallel for
-            for (unsigned int hi = 0; hi < this->nhex; ++hi) {
+            for (size_t hi = 0; hi < this->nhex; ++hi) {
                 this->X[hi] += this->Projections[projectionIDs[i]].field[hi];
             }
         }
 
 #pragma omp parallel for
-        for (unsigned int hi = 0; hi < this->nhex; ++hi) {
+        for (size_t hi = 0; hi < this->nhex; ++hi) {
             this->X[hi] = this->X[hi] - this->Theta[hi];
             if (this->X[hi] < 0.0) {
                 this->X[hi] = 0.0;
@@ -403,39 +356,32 @@ public:
         }
     }
 
-
     void homeostasis(void) {
-
 #pragma omp parallel for
-        for (unsigned int hi = 0; hi < this->nhex; ++hi) {
+        for (size_t hi = 0; hi < this->nhex; ++hi) {
             this->Xavg[hi] = oneMinusBeta * this->X[hi] + beta * this->Xavg[hi];
         }
 #pragma omp parallel for
-        for (unsigned int hi = 0; hi < this->nhex; ++hi) {
+        for (size_t hi = 0; hi < this->nhex; ++hi) {
             this->Theta[hi] = this->Theta[hi] + lambda * (this->Xavg[hi] - mu);
         }
     }
-
-
 };
 
 template<class Flt>
 class PatternGenerator_Sheet : public RD_Sheet<Flt> {
 public:
-    PatternGenerator_Sheet() {}
-
     virtual void step(void) {
         this->stepCount++;
     }
 
     void Gaussian(double x_center, double y_center, double theta, double sigmaA, double sigmaB) {
-
         double cosTheta = cos(theta);
         double sinTheta = sin(theta);
         double overSigmaA = 1. / sigmaA;
         double overSigmaB = 1. / sigmaB;
 #pragma omp parallel for
-        for (unsigned int hi = 0; hi < this->nhex; ++hi) {
+        for (size_t hi = 0; hi < this->nhex; ++hi) {
             Flt dx = this->hg->vhexen[hi]->x - x_center;
             Flt dy = this->hg->vhexen[hi]->y - y_center;
             this->X[hi] = exp(-((dx * cosTheta - dy * sinTheta) * (dx * cosTheta - dy * sinTheta)) * overSigmaA
@@ -443,24 +389,16 @@ public:
         }
     }
 
-
     void Grating(double theta, double phase, double width, double amplitude) {
-
         double cosTheta = cos(theta);
         double sinTheta = sin(theta);
 
 #pragma omp parallel for
-        for (unsigned int hi = 0; hi < this->nhex; ++hi) {
-
+        for (size_t hi = 0; hi < this->nhex; ++hi) {
             this->X[hi] = sin(
                     width * (this->hg->vhexen[hi]->x * sinTheta + this->hg->vhexen[hi]->y * cosTheta + phase));
-
-            //(dx*cosTheta-dy*sinTheta)
-
         }
     }
-
-
 };
 
 
@@ -485,13 +423,10 @@ vector<double> getPolyPixelVals(Mat frame, vector<Point> pp) {
 
 class Square {
 public:
-    int xid, yid;
     double x, y;
     double X;
 
-    Square(int xid, int yid, double x, double y) {
-        this->xid = xid;
-        this->yid = yid;
+    Square(double x, double y) {
         this->x = x;
         this->y = y;
         X = 0.;
@@ -503,28 +438,19 @@ public:
     int n, nx, ny;
     vector<Square> vsquare;
 
-    CartGrid(void) {
-
-    }
-
-    CartGrid(int nx, int ny) {
-        init(ny, ny);
-    }
-
     void init(int nx, int ny) {
-
         this->nx = nx;
         this->ny = ny;
         n = nx * ny;
 
-        double maxDim = (double) max(nx, ny);
+        auto maxDim = (double) max(nx, ny);
 
         int k = 0;
         for (int i = 0; i < nx; i++) {
             double xpos = ((double) i / (double) maxDim) - 0.5;
             for (int j = 0; j < ny; j++) {
                 double ypos = ((double) j / (double) maxDim) - 0.5;
-                vsquare.push_back(Square(i, j, xpos, ypos));
+                vsquare.push_back(Square(xpos, ypos));
                 k++;
             }
         }
@@ -534,36 +460,23 @@ public:
 
 template<class Flt>
 class HexCartSampler : public RD_Sheet<Flt> {
-
 public:
     CartGrid C;
     VideoCapture cap;
-    Flt radius, sigma;
-    vector<vector<unsigned int> > srcId;
+    vector<vector<size_t> > srcId;
     vector<vector<Flt> > weights;
     vector<vector<Flt> > distances;
-    vector<unsigned int> counts;
+    vector<size_t> counts;
     vector<Flt> norms;
     Flt strength;
     vector<Point> mask;
-    unsigned int stepsize;
+    size_t stepsize;
 
     vector<vector<double> > PreLoadedPatterns;
 
-    HexCartSampler(void) {
-
-    }
-
-    HexCartSampler(int nx, int ny, Flt radius, Flt sigma) {
-        init(nx, ny, radius, sigma);
-    }
-
     void initProjection(int nx, int ny, Flt radius, Flt sigma) {
-
         C.init(nx, ny);
 
-        this->radius = radius;
-        this->sigma = sigma;
         this->strength = 1.0;
         srcId.resize(this->nhex);
         counts.resize(this->nhex);
@@ -636,10 +549,8 @@ public:
         step();
     }
 
-    void preloadPatterns(string filename) {
-        stringstream fname;
-        fname << filename;
-        HdfData data(fname.str(), 1);
+    void preloadPatterns(const string filename) {
+        HdfData data(filename, 1);
         vector<double> tmp;
         data.read_contained_vals("P", tmp);
         int nPat = tmp.size() / C.n;
@@ -665,6 +576,3 @@ public:
         stepPreloaded(p);
     }
 };
-
-
-
