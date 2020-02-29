@@ -26,8 +26,15 @@ class gcal : public Network {
 public:
     HexCartSampler<double> HCM;
     PatternGenerator_Sheet<double> IN;
-    LGN<double> LGN_ON, LGN_OFF;
+
+    // HexGrid of LGN ON cells
+    LGN<double> LGN_ON;
+
+    // HexGrid of LGN OFF cells
+    LGN<double> LGN_OFF;
+
     CortexSOM<double> CX;
+
     vector<double> pref, sel;
     bool homeostasis;
     size_t settle;
@@ -179,7 +186,7 @@ public:
     }
 
     /** Cortical step without display output */
-    void stepCortex(void) {
+    void stepCortex() {
         CX.zero_X();
         for (size_t j = 0; j < settle; j++) CX.step();
         for (auto &p: CX.Projections) p.learn();
@@ -231,7 +238,7 @@ public:
         disp.redrawDisplay();
     }
 
-    void map(void) {
+    void map() {
         size_t nOr = 20;
         size_t nPhase = 8;
         auto phaseInc = M_PI / (double) nPhase;
@@ -296,7 +303,7 @@ public:
             data.read_contained_vals(StrFormat("proj_%i", p).c_str(), proj);
             CX.Projections[p].setWeights(proj);
         }
-        absl::PrintF("Loaded weights and modified time to %i", time);
+        PrintF("Loaded weights and modified time to %i", time);
     }
 };
 

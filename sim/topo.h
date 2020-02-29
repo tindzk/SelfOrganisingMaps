@@ -19,7 +19,7 @@ class Network {
 public:
     int time;
 
-    Network(void) {
+    Network() {
         time = 0;
     };
 
@@ -109,7 +109,7 @@ public:
     /* Dot product of each weight vector with the corresponding source sheet field values, multiplied by the strength of
      * the projection
      */
-    void getWeightedSum(void) {
+    void getWeightedSum() {
 #pragma omp parallel for
         for (size_t i = 0; i < nDst; i++) {
             field[i] = 0.;
@@ -121,7 +121,7 @@ public:
     }
 
     /* Hebbian adaptation of the weights */
-    void learn(void) {
+    void learn() {
         if (alpha > 0.0) {
 #pragma omp parallel for
             for (size_t i = 0; i < nDst; i++) {
@@ -132,7 +132,7 @@ public:
         }
     }
 
-    vector<Flt> getWeights(void) {
+    vector<Flt> getWeights() {
         vector<Flt> weightStore;
         for (size_t i = 0; i < nDst; i++) {
             for (size_t j = 0; j < counts[i]; j++) {
@@ -152,7 +152,7 @@ public:
         }
     }
 
-    void renormalize(void) {
+    void renormalize() {
 #pragma omp parallel for
         for (size_t i = 0; i < nDst; i++) {
             Flt sumWeights = 0.0;
@@ -193,12 +193,12 @@ public:
     alignas(alignof(vector<Flt *>)) vector<Flt *> Xptr;
     vector<vector<int> > P;            // identity of projections to (potentially) joint normalize
 
-    virtual void init(void) {
+    virtual void init() {
         this->stepCount = 0;
         this->zero_vector_variable(this->X);
     }
 
-    virtual void allocate(void) {
+    virtual void allocate() {
         morph::RD_Base<Flt>::allocate();
         this->resize_vector_variable(this->X);
         for (size_t hi = 0; hi < this->nhex; ++hi) {
@@ -212,7 +212,7 @@ public:
                 Projection<Flt>(inXptr, this->Xptr, hgSrc, this->hg, radius, strength, alpha, sigma, normalizeAlphas));
     }
 
-    void zero_X(void) {
+    void zero_X() {
 #pragma omp parallel for
         for (size_t hi = 0; hi < this->nhex; ++hi) {
             this->X[hi] = 0.;
@@ -232,7 +232,7 @@ public:
         this->P.push_back(proj);
     }
 
-    void renormalize(void) {
+    void renormalize() {
         for (size_t proj = 0; proj < this->P.size(); proj++) {
 #pragma omp parallel for
             for (size_t i = 0; i < this->nhex; i++) {
@@ -255,7 +255,7 @@ public:
 template<class Flt>
 class LGN : public RD_Sheet<Flt> {
 public:
-    virtual void step(void) {
+    virtual void step() {
         this->stepCount++;
         this->zero_X();
         for (size_t i = 0; i < this->Projections.size(); i++) {
@@ -284,7 +284,7 @@ public:
     alignas(alignof(vector<Flt>)) vector<Flt> Xavg;
     alignas(alignof(vector<Flt>)) vector<Flt> Theta;
 
-    virtual void init(void) {
+    virtual void init() {
         oneMinusBeta = (1. - beta);
         this->stepCount = 0;
         this->zero_vector_variable(this->X);
@@ -292,7 +292,7 @@ public:
         this->zero_vector_variable(this->Theta);
     }
 
-    virtual void allocate(void) {
+    virtual void allocate() {
         morph::RD_Base<Flt>::allocate();
         this->resize_vector_variable(this->X);
         this->resize_vector_variable(this->Xavg);
@@ -306,7 +306,7 @@ public:
         }
     }
 
-    virtual void step(void) {
+    virtual void step() {
         this->stepCount++;
 
         for (size_t i = 0; i < this->Projections.size(); i++) {
@@ -356,7 +356,7 @@ public:
         }
     }
 
-    void homeostasis(void) {
+    void homeostasis() {
 #pragma omp parallel for
         for (size_t hi = 0; hi < this->nhex; ++hi) {
             this->Xavg[hi] = oneMinusBeta * this->X[hi] + beta * this->Xavg[hi];
@@ -371,7 +371,7 @@ public:
 template<class Flt>
 class PatternGenerator_Sheet : public RD_Sheet<Flt> {
 public:
-    virtual void step(void) {
+    virtual void step() {
         this->stepCount++;
     }
 
@@ -447,9 +447,9 @@ public:
 
         int k = 0;
         for (int i = 0; i < nx; i++) {
-            double xpos = ((double) i / (double) maxDim) - 0.5;
+            double xpos = ((double) i / maxDim) - 0.5;
             for (int j = 0; j < ny; j++) {
-                double ypos = ((double) j / (double) maxDim) - 0.5;
+                double ypos = ((double) j / maxDim) - 0.5;
                 vsquare.push_back(Square(xpos, ypos));
                 k++;
             }
@@ -521,7 +521,7 @@ public:
         return cap.open(0);
     }
 
-    virtual void step(void) {
+    virtual void step() {
         this->zero_X();
 #pragma omp parallel for
         for (size_t i = 0; i < this->nhex; i++) {
@@ -532,7 +532,7 @@ public:
         }
     }
 
-    void stepCamera(void) {
+    void stepCamera() {
         Mat frame;
         cap >> frame;
         vector<double> img = getPolyPixelVals(frame, mask);
@@ -571,7 +571,7 @@ public:
         step();
     }
 
-    void stepPreloaded(void) {
+    void stepPreloaded() {
         int p = floor(morph::Tools::randDouble() * PreLoadedPatterns.size());
         stepPreloaded(p);
     }
