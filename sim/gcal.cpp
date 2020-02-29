@@ -298,8 +298,6 @@ public:
         }
         absl::PrintF("Loaded weights and modified time to %i", time);
     }
-
-    ~gcal(void) {}
 };
 
 
@@ -310,6 +308,7 @@ ABSL_FLAG(int, seed, 1, "Seed");
 ABSL_FLAG(int, mode, 1, "Mode");
 ABSL_FLAG(int, input, 0, "Input (0 = Gaussian, 1 = Loaded, 2 = Camera input)");
 ABSL_FLAG(std::string, weightFile, "", "Weight file");
+ABSL_FLAG(std::string, outputPath, "", "Output path for weights/images");
 
 int main(int argc, char **argv) {
     absl::ParseCommandLine(argc, argv);
@@ -384,6 +383,8 @@ int main(int argc, char **argv) {
         Net.load(weightFile);
     }
 
+    auto outputPath = absl::GetFlag(FLAGS_outputPath);
+
     switch (MODE) {
         case 0: { // No plotting
             for (size_t b = 0; b < nBlocks; b++) {
@@ -392,7 +393,8 @@ int main(int argc, char **argv) {
                     Net.stepAfferent(INTYPE);
                     Net.stepCortex();
                 }
-                Net.save(StrFormat("weights_%i.h5", Net.time));
+                if (!outputPath.empty())
+                    Net.save(StrFormat("%s/weights_%i.h5", outputPath, Net.time));
             }
         }
             break;
@@ -417,7 +419,8 @@ int main(int argc, char **argv) {
                     Net.stepCortex(displays[1]);
                     Net.plotWeights(displays[2], 500);
                 }
-                Net.save(StrFormat("weights_%i.h5", Net.time));
+                if (!outputPath.empty())
+                    Net.save(StrFormat("%s/weights_%i.h5", outputPath, Net.time));
             }
             for (auto &d: displays) d.closeDisplay();
         }
@@ -442,12 +445,13 @@ int main(int argc, char **argv) {
             Net.plotWeights(displays[2], 500);
             for (size_t i = 0; i < displays.size(); i++) {
                 displays[i].redrawDisplay();
-                displays[i].saveImage(StrFormat("plot_%i_%i.png", Net.time, i));
+                if (!outputPath.empty())
+                    displays[i].saveImage(StrFormat("%s/plot_%i_%i.png", outputPath, Net.time, i));
             }
             for (auto &d: displays) d.closeDisplay();
         }
             break;
     }
 
-    return 0.;
+    return 0;
 }
