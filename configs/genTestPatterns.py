@@ -1,8 +1,5 @@
 import h5py
 import numpy as np
-import pylab as pl
-import scipy as sc
-
 from PIL import Image
 
 def getPic(fname):
