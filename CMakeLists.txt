@@ -45,6 +45,9 @@ set(CMAKE_CXX_FLAGS "${MORPH_HOST_DEFINITION} -Wall -g -std=c++11 -Wno-unused-re
 endif()
 endif()
 
+set(CMAKE_CXX_STANDARD 11)
+find_package(absl REQUIRED)
+
 # Lib finding - we have to do this, so that the correct include paths
 # are present for OpenGL, OpenCV, etc; they're all included by
 # morphologica header files.
