@@ -252,29 +252,45 @@ public:
     }
 };
 
+/**
+ * Assumes that assert(X.size() == nhex)
+ */
+// TODO `projections` should be a const vector&
 template<class Flt>
-class LGN : public RD_Sheet<Flt> {
-public:
-    virtual void step() {
-        this->stepCount++;
-        this->zero_X();
-        for (size_t i = 0; i < this->Projections.size(); i++) {
-            this->Projections[i].getWeightedSum();
-        }
+void sheetStep(size_t nhex, vector<Projection<Flt>>& projections, const vector<Flt>& xOffsets, vector<Flt>& X) {
+#pragma omp parallel for default(none) shared(nhex) shared(X)
+    for (size_t hi = 0; hi < nhex; ++hi) X[hi] = 0.;
 
-        for (size_t i = 0; i < this->Projections.size(); i++) {
-#pragma omp parallel for
-            for (size_t hi = 0; hi < this->nhex; ++hi) {
-                this->X[hi] += this->Projections[i].field[hi];
-            }
-        }
-#pragma omp parallel for
-        for (size_t hi = 0; hi < this->nhex; ++hi) {
-            this->X[hi] = fmax(this->X[hi], 0.);
+    // TODO avoid mutation
+    for (auto &p: projections) p.getWeightedSum();
+
+    for (auto const p: projections) {
+#pragma omp parallel for default(none) shared(nhex) shared(X) shared(p)
+        for (size_t hi = 0; hi < nhex; ++hi) {
+            X[hi] += p.field[hi];
         }
     }
-};
 
+#pragma omp parallel for default(none) shared(nhex) shared(X) shared(xOffsets)
+    for (size_t hi = 0; hi < nhex; ++hi)
+        X[hi] = fmax(X[hi] - xOffsets[hi], 0.);
+}
+
+template<class Flt>
+class LGN : public RD_Sheet<Flt> {
+private:
+    alignas(alignof(vector<Flt>)) vector<Flt> zeros;
+public:
+    virtual void allocate() {
+        RD_Sheet<Flt>::allocate();
+        this->resize_vector_variable(this->zeros);
+        this->zero_vector_variable(this->zeros);
+    }
+    virtual void step() {
+        this->stepCount++;
+        sheetStep(this->nhex, this->Projections, this->zeros, this->X);
+    }
+};
 
 template<class Flt>
 class CortexSOM : public RD_Sheet<Flt> {
@@ -304,52 +320,14 @@ public:
 
     virtual void step() {
         this->stepCount++;
-
-        for (size_t i = 0; i < this->Projections.size(); i++) {
-            this->Projections[i].getWeightedSum();
-        }
-
-        this->zero_X();
-
-        for (size_t i = 0; i < this->Projections.size(); i++) {
-#pragma omp parallel for
-            for (size_t hi = 0; hi < this->nhex; ++hi) {
-                this->X[hi] += this->Projections[i].field[hi];
-            }
-        }
-
-#pragma omp parallel for
-        for (size_t hi = 0; hi < this->nhex; ++hi) {
-            this->X[hi] = this->X[hi] - this->Theta[hi];
-            if (this->X[hi] < 0.0) {
-                this->X[hi] = 0.0;
-            }
-        }
+        sheetStep(this->nhex, this->Projections, this->Theta, this->X);
     }
 
-    virtual void step(vector<int> projectionIDs) {
+    virtual void step(const vector<int>& projectionIDs) {
         this->stepCount++;
-
-        for (size_t i = 0; i < projectionIDs.size(); i++) {
-            this->Projections[projectionIDs[i]].getWeightedSum();
-        }
-
-        this->zero_X();
-
-        for (size_t i = 0; i < projectionIDs.size(); i++) {
-#pragma omp parallel for
-            for (size_t hi = 0; hi < this->nhex; ++hi) {
-                this->X[hi] += this->Projections[projectionIDs[i]].field[hi];
-            }
-        }
-
-#pragma omp parallel for
-        for (size_t hi = 0; hi < this->nhex; ++hi) {
-            this->X[hi] = this->X[hi] - this->Theta[hi];
-            if (this->X[hi] < 0.0) {
-                this->X[hi] = 0.0;
-            }
-        }
+        vector<Projection<Flt>> filteredProjections;
+        for (auto id: projectionIDs) filteredProjections.push_back(this->Projections[id]);
+        sheetStep(this->nhex, filteredProjections, this->Theta, this->X);
     }
 
     void homeostasis() {
