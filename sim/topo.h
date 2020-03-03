@@ -293,13 +293,9 @@ public:
     }
 
     virtual void allocate() {
-        morph::RD_Base<Flt>::allocate();
-        this->resize_vector_variable(this->X);
+        RD_Sheet<Flt>::allocate();
         this->resize_vector_variable(this->Xavg);
         this->resize_vector_variable(this->Theta);
-        for (size_t hi = 0; hi < this->nhex; ++hi) {
-            this->Xptr.push_back(&this->X[hi]);
-        }
         for (size_t hi = 0; hi < this->nhex; ++hi) {
             this->Xavg[hi] = mu;
             this->Theta[hi] = thetaInit;
