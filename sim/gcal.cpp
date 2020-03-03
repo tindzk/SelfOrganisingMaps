@@ -7,10 +7,6 @@
 #include <morph/RD_Base.h>
 #include <morph/RD_Plot.h>
 
-#include <absl/algorithm/container.h>
-
-using absl::c_for_each;
-
 #include <absl/strings/str_format.h>
 
 using absl::PrintF;
@@ -117,7 +113,7 @@ public:
         LGN_OFF.addProjection(IN.Xptr, IN.hg, afferRadius, -LGNstrength, 0.0, LGNCenterSigma, false);
         LGN_OFF.addProjection(IN.Xptr, IN.hg, afferRadius, +LGNstrength, 0.0, LGNSurroundSigma, false);
 
-        c_for_each(LGN_OFF.Projections, [](Projection<double> p) { p.renormalize(); });
+        for (auto &p: LGN_OFF.Projections) p.renormalize();
 
         // CORTEX SHEET
         CX.beta = beta;
@@ -191,7 +187,7 @@ public:
         for (size_t j = 0; j < settle; j++) {
             CX.step();
         }
-        c_for_each(CX.Projections, [](Projection<double> p) { p.learn(); });
+        for (auto &p: CX.Projections) p.learn();
         CX.renormalize();
         if (homeostasis) { CX.homeostasis(); }
         time++;
@@ -205,7 +201,7 @@ public:
             CX.step();
             plt.scalarfields(disp, CX.hg, CX.X);
         }
-        c_for_each(CX.Projections, [](Projection<double> p) { p.learn(); });
+        for (auto &p: CX.Projections) p.learn();
         CX.renormalize();
         if (homeostasis) { CX.homeostasis(); }
         time++;
@@ -421,10 +417,10 @@ int main(int argc, char **argv) {
             displays.push_back(morph::Gdisplay(1200, 400, 0, 0, "Cortical Projection", 1.7, 0.0, 0.0));
             displays.push_back(morph::Gdisplay(600, 300, 0, 0, "LGN ON/OFF", 1.7, 0.0, 0.0));
             displays.push_back(morph::Gdisplay(600, 600, 0, 0, "Map", 1.7, 0.0, 0.0));
-            c_for_each(displays, [](morph::Gdisplay d) {
+            for (auto &d: displays) {
                 d.resetDisplay(vector<double>(3, 0), vector<double>(3, 0), vector<double>(3, 0));
                 d.redrawDisplay();
-            });
+            }
             for (size_t b = 0; b < nBlocks; b++) {
                 Net.map();
                 Net.plotMap(displays[4]);
@@ -436,7 +432,7 @@ int main(int argc, char **argv) {
                 }
                 Net.save(StrFormat("weights_%i.h5", Net.time));
             }
-            c_for_each(displays, [](morph::Gdisplay d) { d.closeDisplay(); });
+            for (auto &d: displays) d.closeDisplay();
         }
             break;
 
@@ -447,22 +443,21 @@ int main(int argc, char **argv) {
             displays.push_back(morph::Gdisplay(1200, 400, 0, 0, "Cortical Projection", 1.7, 0.0, 0.0));
             displays.push_back(morph::Gdisplay(600, 300, 0, 0, "LGN ON/OFF", 1.7, 0.0, 0.0));
             displays.push_back(morph::Gdisplay(600, 600, 0, 0, "Map", 1.7, 0.0, 0.0));
-            c_for_each(displays, [](morph::Gdisplay d) {
+            for (auto &d: displays) {
                 d.resetDisplay(vector<double>(3, 0), vector<double>(3, 0), vector<double>(3, 0));
                 d.redrawDisplay();
-            });
+            }
             Net.map();
             Net.plotMap(displays[4]);
             Net.stepAfferent(INTYPE);
             Net.plotAfferent(displays[0], displays[3]);
             Net.stepCortex(displays[1]);
             Net.plotWeights(displays[2], 500);
-            c_for_each(displays, [](morph::Gdisplay d) {});
             for (size_t i = 0; i < displays.size(); i++) {
                 displays[i].redrawDisplay();
                 displays[i].saveImage(StrFormat("plot_%i_%i.png", Net.time, i));
             }
-            c_for_each(displays, [](morph::Gdisplay d) { d.closeDisplay(); });
+            for (auto &d: displays) d.closeDisplay();
         }
             break;
     }
