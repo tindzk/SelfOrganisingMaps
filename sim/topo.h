@@ -46,7 +46,6 @@ public:
     vector<vector<size_t> > srcId;            // identity of connected units on the source sheet
     vector<vector<Flt> > weights;        // connection weights
     vector<vector<Flt> > distances;        // pre-compute distances between units in source and destination sheets
-    vector<Flt> field;                // current activity patterns
     vector<Flt *> fSrc;                // pointers to the field elements on the source sheet
     vector<Flt *> fDst;                // pointers to the field elements on the destination sheet
     vector<double> weightPlot;            // for constructing activity plots
@@ -67,7 +66,6 @@ public:
         nDst = hgDst->vhexen.size();
         nSrc = hgSrc->vhexen.size();
 
-        field.resize(nDst);
         counts.resize(nDst);
         norms.resize(nDst);
         srcId.resize(nDst);
@@ -103,20 +101,6 @@ public:
             if (normalizeAlphas) {
                 alphas[i] *= norms[i];
             }
-        }
-    }
-
-    /* Dot product of each weight vector with the corresponding source sheet field values, multiplied by the strength of
-     * the projection
-     */
-    void getWeightedSum() {
-#pragma omp parallel for
-        for (size_t i = 0; i < nDst; i++) {
-            field[i] = 0.;
-            for (size_t j = 0; j < counts[i]; j++) {
-                field[i] += *fSrc[srcId[i][j]] * weights[i][j];
-            }
-            field[i] *= strength;
         }
     }
 
@@ -187,6 +171,8 @@ public:
 
 template<class Flt>
 class RD_Sheet : public morph::RD_Base<Flt> {
+protected:
+    vector<Flt> fields;                // current activity patterns
 public:
     vector<Projection<Flt>> Projections;
     alignas(alignof(vector<Flt>)) vector<Flt> X;
@@ -210,6 +196,7 @@ public:
                        bool normalizeAlphas) {
         Projections.push_back(
                 Projection<Flt>(inXptr, this->Xptr, hgSrc, this->hg, radius, strength, alpha, sigma, normalizeAlphas));
+        this->fields.resize(Projections.size() * this->nhex, 0.0);
     }
 
     void zero_X() {
@@ -255,19 +242,38 @@ public:
 /**
  * Assumes that assert(X.size() == nhex)
  */
-// TODO `projections` should be a const vector&
 template<class Flt>
-void sheetStep(size_t nhex, vector<Projection<Flt>>& projections, const vector<Flt>& xOffsets, vector<Flt>& X) {
+void sheetStep(
+        size_t nhex,
+        const vector<Projection<Flt>>& projections,
+        const vector<Flt>& xOffsets,
+        vector<Flt>& fields,
+        vector<Flt>& X
+) {
 #pragma omp parallel for default(none) shared(nhex) shared(X)
     for (size_t hi = 0; hi < nhex; ++hi) X[hi] = 0.;
 
-    // TODO avoid mutation
-    for (auto &p: projections) p.getWeightedSum();
+    for (size_t pi = 0; pi < projections.size(); pi++) {
+        auto& p = projections[pi];
 
-    for (auto const p: projections) {
-#pragma omp parallel for default(none) shared(nhex) shared(X) shared(p)
+        /* Dot product of each weight vector with the corresponding source sheet field values, multiplied by the
+         * strength of the projection
+         */
+#pragma omp parallel for default(none) shared(nhex) shared(fields) shared(p) shared(pi)
+        for (size_t hi = 0; hi < nhex; hi++) {
+            auto field = 0.;
+            for (size_t hj = 0; hj < p.counts[hi]; hj++)
+                field += *p.fSrc[p.srcId[hi][hj]] * p.weights[hi][hj];
+            field *= p.strength;
+
+            fields[pi * nhex + hi] = field;
+        }
+    }
+
+    for (size_t pi = 0; pi < projections.size(); pi++) {
+#pragma omp parallel for default(none) shared(nhex) shared(X) shared(fields) shared(pi)
         for (size_t hi = 0; hi < nhex; ++hi) {
-            X[hi] += p.field[hi];
+            X[hi] += fields[pi * nhex + hi];
         }
     }
 
@@ -288,7 +294,7 @@ public:
     }
     virtual void step() {
         this->stepCount++;
-        sheetStep(this->nhex, this->Projections, this->zeros, this->X);
+        sheetStep(this->nhex, this->Projections, this->zeros, this->fields, this->X);
     }
 };
 
@@ -320,14 +326,14 @@ public:
 
     virtual void step() {
         this->stepCount++;
-        sheetStep(this->nhex, this->Projections, this->Theta, this->X);
+        sheetStep(this->nhex, this->Projections, this->Theta, this->fields, this->X);
     }
 
     virtual void step(const vector<int>& projectionIDs) {
         this->stepCount++;
         vector<Projection<Flt>> filteredProjections;
         for (auto id: projectionIDs) filteredProjections.push_back(this->Projections[id]);
-        sheetStep(this->nhex, filteredProjections, this->Theta, this->X);
+        sheetStep(this->nhex, filteredProjections, this->Theta, this->fields, this->X);
     }
 
     void homeostasis() {
