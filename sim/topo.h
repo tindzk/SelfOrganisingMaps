@@ -329,11 +329,9 @@ public:
         sheetStep(this->nhex, this->Projections, this->Theta, this->fields, this->X);
     }
 
-    virtual void step(const vector<int>& projectionIDs) {
+    virtual void step(const vector<Projection<Flt>>& projections) {
         this->stepCount++;
-        vector<Projection<Flt>> filteredProjections;
-        for (auto id: projectionIDs) filteredProjections.push_back(this->Projections[id]);
-        sheetStep(this->nhex, filteredProjections, this->Theta, this->fields, this->X);
+        sheetStep(this->nhex, projections, this->Theta, this->fields, this->X);
     }
 
     void homeostasis() {
