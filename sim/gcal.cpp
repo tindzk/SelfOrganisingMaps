@@ -23,13 +23,18 @@ using namespace morph;
 /*** SPECIFIC MODEL DEFINED HERE ***/
 
 class gcal : public Network {
-
 public:
-
     HexCartSampler<double> HCM;
     PatternGenerator_Sheet<double> IN;
-    LGN<double> LGN_ON, LGN_OFF;
+
+    // HexGrid of LGN ON cells
+    LGN<double> LGN_ON;
+
+    // HexGrid of LGN OFF cells
+    LGN<double> LGN_OFF;
+
     CortexSOM<double> CX;
+
     vector<double> pref, sel;
     bool homeostasis;
     size_t settle;
@@ -38,7 +43,6 @@ public:
     float sigmaA, sigmaB, afferRadius, excitRadius, inhibRadius, afferSigma, excitSigma, inhibSigma, LGNCenterSigma, LGNSurroundSigma;
 
     void init(Json::Value root) {
-
         // GET PARAMS FROM JSON
         homeostasis = root.get("homeostasis", true).asBool();
         settle = root.get("settle", 16).asUInt();
@@ -75,13 +79,10 @@ public:
         LGNCenterSigma = root.get("LGNCenterSigma", 0.037).asFloat() * scale;
         LGNSurroundSigma = root.get("LGNSuroundSigma", 0.150).asFloat() * scale;
 
-
         // INITIALIZE LOGFILE
-        stringstream fname;
         string logpath = root.get("logpath", "logs/").asString();
         morph::Tools::createDir(logpath);
-        fname << logpath << "/log.h5";
-        HdfData data(fname.str());
+        HdfData data(StrFormat("%s/log.h5", logpath));
 
         // Mapping Between Hexagonal and Cartesian Sheet
         HCM.svgpath = root.get("IN_svgpath", "boundaries/trialmod.svg").asString();
@@ -94,18 +95,16 @@ public:
         IN.allocate();
 
         // LGN ON CELLS
-        LGN_ON.strength = LGNstrength;
         LGN_ON.svgpath = root.get("LGN_svgpath", "boundaries/trialmod.svg").asString();
         LGN_ON.init();
         LGN_ON.allocate();
 
         LGN_ON.addProjection(IN.Xptr, IN.hg, afferRadius, +LGNstrength, 0.0, LGNCenterSigma, false);
         LGN_ON.addProjection(IN.Xptr, IN.hg, afferRadius, -LGNstrength, 0.0, LGNSurroundSigma, false);
-        for (size_t i = 0; i < LGN_ON.Projections.size(); i++) {
-            LGN_ON.Projections[i].renormalize();
-        }
 
-        LGN_OFF.strength = LGNstrength;
+        for (auto &p: LGN_ON.Projections) p.renormalize();
+
+        // LGN OFF CELLS
         LGN_OFF.svgpath = root.get("IN_svgpath", "boundaries/trialmod.svg").asString();
         LGN_OFF.init();
         LGN_OFF.allocate();
@@ -141,6 +140,10 @@ public:
         sel.resize(CX.nhex, 0.);
     }
 
+    /**
+     * Performs an afferent step, i.e. present input to LGN ON/OFF
+     * @note Does not perform step on cortical sheet
+     */
     void stepAfferent(unsigned type) {
         switch (type) {
             case 0: { // Gaussians
@@ -182,17 +185,17 @@ public:
         plt.scalarfields(disp2, LGN_ON.hg, L);
     }
 
-    void stepCortex(void) {
+    /** Cortical step without display output */
+    void stepCortex() {
         CX.zero_X();
-        for (size_t j = 0; j < settle; j++) {
-            CX.step();
-        }
+        for (size_t j = 0; j < settle; j++) CX.step();
         for (auto &p: CX.Projections) p.learn();
         CX.renormalize();
-        if (homeostasis) { CX.homeostasis(); }
+        if (homeostasis) CX.homeostasis();
         time++;
     }
 
+    /** Cortical step with display output */
     void stepCortex(morph::Gdisplay disp) {
         vector<double> fx(3, 0.);
         RD_Plot<double> plt(fx, fx, fx);
@@ -203,7 +206,7 @@ public:
         }
         for (auto &p: CX.Projections) p.learn();
         CX.renormalize();
-        if (homeostasis) { CX.homeostasis(); }
+        if (homeostasis) CX.homeostasis();
         time++;
     }
 
@@ -218,7 +221,6 @@ public:
     }
 
     void plotMap(morph::Gdisplay disp) {
-
         disp.resetDisplay(vector<double>(3, 0.), vector<double>(3, 0.), vector<double>(3, 0.));
         double maxSel = -1e9;
         for (size_t i = 0; i < CX.nhex; i++) {
@@ -236,7 +238,7 @@ public:
         disp.redrawDisplay();
     }
 
-    void map(void) {
+    void map() {
         size_t nOr = 20;
         size_t nPhase = 8;
         auto phaseInc = M_PI / (double) nPhase;
@@ -258,7 +260,7 @@ public:
                 CX.zero_X();
                 CX.step(aff);
                 for (size_t k = 0; k < maxPhase.size(); k++) {
-                    if (maxPhase[k] < CX.X[k]) { maxPhase[k] = CX.X[k]; }
+                    if (maxPhase[k] < CX.X[k]) maxPhase[k] = CX.X[k];
                 }
             }
 
@@ -281,38 +283,28 @@ public:
         }
     }
 
-    void save(string filename) {
-        stringstream fname;
-        fname << filename;
-        HdfData data(fname.str());
+    void save(const string filename) {
+        HdfData data(filename);
         vector<int> timetmp(1, time);
         data.add_contained_vals("time", timetmp);
         for (size_t p = 0; p < CX.Projections.size(); p++) {
             auto proj = CX.Projections[p].getWeights();
-            stringstream ss;
-            ss << "proj_" << p;
-            data.add_contained_vals(ss.str().c_str(), proj);
+            data.add_contained_vals(StrFormat("proj_%i", p).c_str(), proj);
         }
     }
 
-    void load(string filename) {
-        stringstream fname;
-        fname << filename;
-        HdfData data(fname.str(), 1);
+    void load(const string filename) {
+        HdfData data(filename, 1);
         vector<int> timetmp;
         data.read_contained_vals("time", timetmp);
         time = timetmp[0];
         for (size_t p = 0; p < CX.Projections.size(); p++) {
             vector<double> proj;
-            stringstream ss;
-            ss << "proj_" << p;
-            data.read_contained_vals(ss.str().c_str(), proj);
+            data.read_contained_vals(StrFormat("proj_%i", p).c_str(), proj);
             CX.Projections[p].setWeights(proj);
         }
-        absl::PrintF("Loaded weights and modified time to %i", time);
+        PrintF("Loaded weights and modified time to %i", time);
     }
-
-    ~gcal(void) {}
 };
 
 
@@ -323,6 +315,7 @@ ABSL_FLAG(int, seed, 1, "Seed");
 ABSL_FLAG(int, mode, 1, "Mode");
 ABSL_FLAG(int, input, 0, "Input (0 = Gaussian, 1 = Loaded, 2 = Camera input)");
 ABSL_FLAG(std::string, weightFile, "", "Weight file");
+ABSL_FLAG(std::string, outputPath, "", "Output path for weights/images");
 
 int main(int argc, char **argv) {
     absl::ParseCommandLine(argc, argv);
@@ -397,6 +390,8 @@ int main(int argc, char **argv) {
         Net.load(weightFile);
     }
 
+    auto outputPath = absl::GetFlag(FLAGS_outputPath);
+
     switch (MODE) {
         case 0: { // No plotting
             for (size_t b = 0; b < nBlocks; b++) {
@@ -405,7 +400,8 @@ int main(int argc, char **argv) {
                     Net.stepAfferent(INTYPE);
                     Net.stepCortex();
                 }
-                Net.save(StrFormat("weights_%i.h5", Net.time));
+                if (!outputPath.empty())
+                    Net.save(StrFormat("%s/weights_%i.h5", outputPath, Net.time));
             }
         }
             break;
@@ -430,13 +426,14 @@ int main(int argc, char **argv) {
                     Net.stepCortex(displays[1]);
                     Net.plotWeights(displays[2], 500);
                 }
-                Net.save(StrFormat("weights_%i.h5", Net.time));
+                if (!outputPath.empty())
+                    Net.save(StrFormat("%s/weights_%i.h5", outputPath, Net.time));
             }
             for (auto &d: displays) d.closeDisplay();
         }
             break;
 
-        case 2: {// Map only
+        case 2: { // Map only
             vector<morph::Gdisplay> displays;
             displays.push_back(morph::Gdisplay(600, 600, 0, 0, "Input Activity", 1.7, 0.0, 0.0));
             displays.push_back(morph::Gdisplay(600, 600, 0, 0, "Cortical Activity", 1.7, 0.0, 0.0));
@@ -455,12 +452,13 @@ int main(int argc, char **argv) {
             Net.plotWeights(displays[2], 500);
             for (size_t i = 0; i < displays.size(); i++) {
                 displays[i].redrawDisplay();
-                displays[i].saveImage(StrFormat("plot_%i_%i.png", Net.time, i));
+                if (!outputPath.empty())
+                    displays[i].saveImage(StrFormat("%s/plot_%i_%i.png", outputPath, Net.time, i));
             }
             for (auto &d: displays) d.closeDisplay();
         }
             break;
     }
 
-    return 0.;
+    return 0;
 }

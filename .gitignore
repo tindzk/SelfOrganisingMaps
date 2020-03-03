@@ -1,3 +1,8 @@
 /.idea/
 /build/
 /cmake-build-*/
+
+*.h5
+*.png
+
+venv/
