@@ -261,7 +261,7 @@ public:
                 IN.Grating(theta, phase, 30.0, 1.0);
                 LGN_ON.step();
                 LGN_OFF.step();
-                CX.zero_X();
+                CX.zero_X();  // Required because of CX's self connections
                 CX.step(afferent);
                 for (size_t k = 0; k < maxPhase.size(); k++) {
                     if (maxPhase[k] < CX.X[k]) maxPhase[k] = CX.X[k];

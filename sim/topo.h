@@ -250,9 +250,7 @@ void sheetStep(
         vector<Flt>& fields,
         vector<Flt>& X
 ) {
-#pragma omp parallel for default(none) shared(nhex) shared(X)
-    for (size_t hi = 0; hi < nhex; ++hi) X[hi] = 0.;
-
+    // Calculate activity patterns
     for (size_t pi = 0; pi < projections.size(); pi++) {
         auto& p = projections[pi];
 
@@ -269,6 +267,11 @@ void sheetStep(
             fields[pi * nhex + hi] = field;
         }
     }
+
+    // This must not be performed before calculating the activity patterns because `fSrc` could contain self connections
+    // as in the case of the cortical sheet.
+#pragma omp parallel for default(none) shared(nhex) shared(X)
+    for (size_t hi = 0; hi < nhex; ++hi) X[hi] = 0.;
 
     for (size_t pi = 0; pi < projections.size(); pi++) {
 #pragma omp parallel for default(none) shared(nhex) shared(X) shared(fields) shared(pi)
