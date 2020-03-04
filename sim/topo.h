@@ -46,7 +46,6 @@ public:
     vector<vector<size_t> > srcId;            // identity of connected units on the source sheet
     vector<vector<Flt> > weights;        // connection weights
     vector<vector<Flt> > distances;        // pre-compute distances between units in source and destination sheets
-    vector<Flt> field;                // current activity patterns
     vector<Flt *> fSrc;                // pointers to the field elements on the source sheet
     vector<Flt *> fDst;                // pointers to the field elements on the destination sheet
     vector<double> weightPlot;            // for constructing activity plots
@@ -67,7 +66,6 @@ public:
         nDst = hgDst->vhexen.size();
         nSrc = hgSrc->vhexen.size();
 
-        field.resize(nDst);
         counts.resize(nDst);
         norms.resize(nDst);
         srcId.resize(nDst);
@@ -103,20 +101,6 @@ public:
             if (normalizeAlphas) {
                 alphas[i] *= norms[i];
             }
-        }
-    }
-
-    /* Dot product of each weight vector with the corresponding source sheet field values, multiplied by the strength of
-     * the projection
-     */
-    void getWeightedSum() {
-#pragma omp parallel for
-        for (size_t i = 0; i < nDst; i++) {
-            field[i] = 0.;
-            for (size_t j = 0; j < counts[i]; j++) {
-                field[i] += *fSrc[srcId[i][j]] * weights[i][j];
-            }
-            field[i] *= strength;
         }
     }
 
@@ -187,6 +171,8 @@ public:
 
 template<class Flt>
 class RD_Sheet : public morph::RD_Base<Flt> {
+protected:
+    vector<Flt> fields;                // current activity patterns
 public:
     vector<Projection<Flt>> Projections;
     alignas(alignof(vector<Flt>)) vector<Flt> X;
@@ -210,6 +196,7 @@ public:
                        bool normalizeAlphas) {
         Projections.push_back(
                 Projection<Flt>(inXptr, this->Xptr, hgSrc, this->hg, radius, strength, alpha, sigma, normalizeAlphas));
+        this->fields.resize(Projections.size() * this->nhex, 0.0);
     }
 
     void zero_X() {
@@ -252,29 +239,67 @@ public:
     }
 };
 
+/**
+ * Assumes that assert(X.size() == nhex)
+ */
 template<class Flt>
-class LGN : public RD_Sheet<Flt> {
-public:
-    virtual void step() {
-        this->stepCount++;
-        this->zero_X();
-        for (size_t i = 0; i < this->Projections.size(); i++) {
-            this->Projections[i].getWeightedSum();
-        }
+void sheetStep(
+        size_t nhex,
+        const vector<Projection<Flt>>& projections,
+        const vector<Flt>& xOffsets,
+        vector<Flt>& fields,
+        vector<Flt>& X
+) {
+    // Calculate activity patterns
+    for (size_t pi = 0; pi < projections.size(); pi++) {
+        auto& p = projections[pi];
 
-        for (size_t i = 0; i < this->Projections.size(); i++) {
-#pragma omp parallel for
-            for (size_t hi = 0; hi < this->nhex; ++hi) {
-                this->X[hi] += this->Projections[i].field[hi];
-            }
-        }
-#pragma omp parallel for
-        for (size_t hi = 0; hi < this->nhex; ++hi) {
-            this->X[hi] = fmax(this->X[hi], 0.);
+        /* Dot product of each weight vector with the corresponding source sheet field values, multiplied by the
+         * strength of the projection
+         */
+#pragma omp parallel for default(none) shared(nhex) shared(fields) shared(p) shared(pi)
+        for (size_t hi = 0; hi < nhex; hi++) {
+            auto field = 0.;
+            for (size_t hj = 0; hj < p.counts[hi]; hj++)
+                field += *p.fSrc[p.srcId[hi][hj]] * p.weights[hi][hj];
+            field *= p.strength;
+
+            fields[pi * nhex + hi] = field;
         }
     }
-};
 
+    // This must not be performed before calculating the activity patterns because `fSrc` could contain self connections
+    // as in the case of the cortical sheet.
+#pragma omp parallel for default(none) shared(nhex) shared(X)
+    for (size_t hi = 0; hi < nhex; ++hi) X[hi] = 0.;
+
+    for (size_t pi = 0; pi < projections.size(); pi++) {
+#pragma omp parallel for default(none) shared(nhex) shared(X) shared(fields) shared(pi)
+        for (size_t hi = 0; hi < nhex; ++hi) {
+            X[hi] += fields[pi * nhex + hi];
+        }
+    }
+
+#pragma omp parallel for default(none) shared(nhex) shared(X) shared(xOffsets)
+    for (size_t hi = 0; hi < nhex; ++hi)
+        X[hi] = fmax(X[hi] - xOffsets[hi], 0.);
+}
+
+template<class Flt>
+class LGN : public RD_Sheet<Flt> {
+private:
+    alignas(alignof(vector<Flt>)) vector<Flt> zeros;
+public:
+    virtual void allocate() {
+        RD_Sheet<Flt>::allocate();
+        this->resize_vector_variable(this->zeros);
+        this->zero_vector_variable(this->zeros);
+    }
+    virtual void step() {
+        this->stepCount++;
+        sheetStep(this->nhex, this->Projections, this->zeros, this->fields, this->X);
+    }
+};
 
 template<class Flt>
 class CortexSOM : public RD_Sheet<Flt> {
@@ -293,13 +318,9 @@ public:
     }
 
     virtual void allocate() {
-        morph::RD_Base<Flt>::allocate();
-        this->resize_vector_variable(this->X);
+        RD_Sheet<Flt>::allocate();
         this->resize_vector_variable(this->Xavg);
         this->resize_vector_variable(this->Theta);
-        for (size_t hi = 0; hi < this->nhex; ++hi) {
-            this->Xptr.push_back(&this->X[hi]);
-        }
         for (size_t hi = 0; hi < this->nhex; ++hi) {
             this->Xavg[hi] = mu;
             this->Theta[hi] = thetaInit;
@@ -308,52 +329,12 @@ public:
 
     virtual void step() {
         this->stepCount++;
-
-        for (size_t i = 0; i < this->Projections.size(); i++) {
-            this->Projections[i].getWeightedSum();
-        }
-
-        this->zero_X();
-
-        for (size_t i = 0; i < this->Projections.size(); i++) {
-#pragma omp parallel for
-            for (size_t hi = 0; hi < this->nhex; ++hi) {
-                this->X[hi] += this->Projections[i].field[hi];
-            }
-        }
-
-#pragma omp parallel for
-        for (size_t hi = 0; hi < this->nhex; ++hi) {
-            this->X[hi] = this->X[hi] - this->Theta[hi];
-            if (this->X[hi] < 0.0) {
-                this->X[hi] = 0.0;
-            }
-        }
+        sheetStep(this->nhex, this->Projections, this->Theta, this->fields, this->X);
     }
 
-    virtual void step(vector<int> projectionIDs) {
+    virtual void step(const vector<Projection<Flt>>& projections) {
         this->stepCount++;
-
-        for (size_t i = 0; i < projectionIDs.size(); i++) {
-            this->Projections[projectionIDs[i]].getWeightedSum();
-        }
-
-        this->zero_X();
-
-        for (size_t i = 0; i < projectionIDs.size(); i++) {
-#pragma omp parallel for
-            for (size_t hi = 0; hi < this->nhex; ++hi) {
-                this->X[hi] += this->Projections[projectionIDs[i]].field[hi];
-            }
-        }
-
-#pragma omp parallel for
-        for (size_t hi = 0; hi < this->nhex; ++hi) {
-            this->X[hi] = this->X[hi] - this->Theta[hi];
-            if (this->X[hi] < 0.0) {
-                this->X[hi] = 0.0;
-            }
-        }
+        sheetStep(this->nhex, projections, this->Theta, this->fields, this->X);
     }
 
     void homeostasis() {

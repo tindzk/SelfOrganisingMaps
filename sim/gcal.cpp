@@ -247,8 +247,12 @@ public:
         vector<double> maxPhase(CX.nhex, 0.);
         vector<double> Vx(CX.nhex);
         vector<double> Vy(CX.nhex);
-        vector<int> aff(2, 0);
-        aff[1] = 1;
+
+        // Do not perform any steps for CX's self connections
+        vector<Projection<double>> afferent;
+        afferent.push_back(CX.Projections[0]);  // LGN ON
+        afferent.push_back(CX.Projections[1]);  // LGN OFF
+
         for (size_t i = 0; i < nOr; i++) {
             double theta = i * M_PI / (double) nOr;
             std::fill(maxPhase.begin(), maxPhase.end(), -1e9);
@@ -257,8 +261,8 @@ public:
                 IN.Grating(theta, phase, 30.0, 1.0);
                 LGN_ON.step();
                 LGN_OFF.step();
-                CX.zero_X();
-                CX.step(aff);
+                CX.zero_X();  // Required because of CX's self connections
+                CX.step(afferent);
                 for (size_t k = 0; k < maxPhase.size(); k++) {
                     if (maxPhase[k] < CX.X[k]) maxPhase[k] = CX.X[k];
                 }
