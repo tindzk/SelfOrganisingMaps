@@ -104,15 +104,23 @@ public:
         }
     }
 
-    /* Hebbian adaptation of the weights */
+    /**
+     * Hebbian adaptation of the weights
+     *
+     * Requires calling RD_Sheet.renormalize() afterwards to constrain the weights using divisive postsynaptic weight
+     * normalisation.
+     *
+     * From paper: "This rule results in connections that reflect correlations between the presynaptic ON/OFF unit
+     * activities and the postsynaptic V1 response."
+     *
+     * Implements the numerator of eq. 10
+     */
     void learn() {
         if (alpha > 0.0) {
-#pragma omp parallel for
-            for (size_t i = 0; i < nDst; i++) {
-                for (size_t j = 0; j < counts[i]; j++) {
+#pragma omp parallel for default(none)
+            for (size_t i = 0; i < nDst; i++)
+                for (size_t j = 0; j < counts[i]; j++)
                     weights[i][j] += *fSrc[srcId[i][j]] * *fDst[i] * alphas[i];
-                }
-            }
         }
     }
 
@@ -220,19 +228,21 @@ public:
     }
 
     void renormalize() {
-        for (size_t proj = 0; proj < this->P.size(); proj++) {
-#pragma omp parallel for
+        for (auto &projections: this->P) {
+#pragma omp parallel for default(none) shared(projections)
             for (size_t i = 0; i < this->nhex; i++) {
                 Flt sumWeights = 0.0;
-                for (size_t p = 0; p < this->P[proj].size(); p++) {
-                    for (size_t j = 0; j < this->Projections[this->P[proj][p]].counts[i]; j++) {
-                        sumWeights += this->Projections[this->P[proj][p]].weights[i][j];
-                    }
+
+                for (auto projectionId: projections) {
+                    auto &p = this->Projections[projectionId];
+                    for (size_t j = 0; j < p.counts[i]; j++)
+                        sumWeights += p.weights[i][j];
                 }
-                for (size_t p = 0; p < this->P[proj].size(); p++) {
-                    for (size_t j = 0; j < this->Projections[this->P[proj][p]].counts[i]; j++) {
-                        this->Projections[this->P[proj][p]].weights[i][j] /= sumWeights;
-                    }
+
+                for (auto projectionId: projections) {
+                    auto &p = this->Projections[projectionId];
+                    for (size_t j = 0; j < p.counts[i]; j++)
+                        p.weights[i][j] /= sumWeights;
                 }
             }
         }
