@@ -361,15 +361,14 @@ public:
      * specified target."
      */
     void homeostasis() {
-        // Calculate average given degree of smoothing (beta) as per eq. 7
 #pragma omp parallel for default(none)
-        for (size_t hi = 0; hi < this->nhex; ++hi)
+        for (size_t hi = 0; hi < this->nhex; ++hi) {
+            // Calculate average given degree of smoothing (beta) as per eq. 7
             Xavg[hi] = (1. - params.beta) * this->X[hi] + params.beta * Xavg[hi];
 
-        // Update thresholds as per eq. 8
-#pragma omp parallel for default(none)
-        for (size_t hi = 0; hi < this->nhex; ++hi)
+            // Update thresholds as per eq. 8
             Theta[hi] = Theta[hi] + params.lambda * (Xavg[hi] - params.mu);
+        }
     }
 };
 
