@@ -46,15 +46,17 @@ public:
     float sigmaA, sigmaB, afferRadius, excitRadius, inhibRadius, afferSigma, excitSigma, inhibSigma, LGNCenterSigma, LGNSurroundSigma;
 
     void init(Json::Value root) {
-        // GET PARAMS FROM JSON
-        homeostasis = root.get("homeostasis", true).asBool();
+        // Read parameters from JSON
         settle = root.get("settle", 16).asUInt();
 
         // homeostasis
+        homeostasis = root.get("homeostasis", true).asBool();
         beta = root.get("beta", 0.991).asFloat();
         lambda = root.get("lambda", 0.01).asFloat();
         mu = root.get("thetaInit", 0.15).asFloat();
         thetaInit = root.get("mu", 0.024).asFloat();
+
+        // Gaussian
         xRange = root.get("xRange", 2.0).asFloat();
         yRange = root.get("yRange", 2.0).asFloat();
 
@@ -118,12 +120,8 @@ public:
         for (auto &p: LGN_OFF.Projections) p.renormalize();
 
         // Cortex Sheet (V1)
-        CX.beta = beta;
-        CX.lambda = lambda;
-        CX.mu = mu;
-        CX.thetaInit = thetaInit;
         CX.svgpath = root.get("CX_svgpath", "boundaries/trialmod.svg").asString();
-        CX.init();
+        CX.init({beta = beta, lambda = lambda, mu = mu, thetaInit = thetaInit});
         CX.allocate();
 
         // afferent projection from ON/OFF cells
@@ -197,6 +195,8 @@ public:
      */
     void stepCortex(const std::function<void(HexGrid*, vector<double>&)> f) {
         CX.zero_X();
+        // From paper: "Once all 16 settling steps are complete, the settled V1 activation pattern is deemed to be the
+        // V1 response to the presented pattern."
         for (size_t j = 0; j < settle; j++) {
             CX.step();
             f(CX.hg, CX.X);

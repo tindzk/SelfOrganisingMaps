@@ -177,7 +177,7 @@ public:
     vector<Projection<Flt>> Projections;
     alignas(alignof(vector<Flt>)) vector<Flt> X;
     alignas(alignof(vector<Flt *>)) vector<Flt *> Xptr;
-    vector<vector<int> > P;            // identity of projections to (potentially) joint normalize
+    vector<vector<int>> P;            // identity of projections to (potentially) joint normalize
 
     virtual void init() {
         this->stepCount = 0;
@@ -302,17 +302,34 @@ public:
 };
 
 template<class Flt>
+struct HomeostasisParameters {
+    // Degree of smoothing in average calculation
+    Flt beta;
+
+    // Target V1 unit activity
+    Flt mu;
+
+    // Homeostatic learning rate
+    Flt lambda;
+
+    // Initial threshold
+    Flt thetaInit;
+};
+
+template<class Flt>
 class CortexSOM : public RD_Sheet<Flt> {
-public:
-    Flt beta, lambda, mu, oneMinusBeta, thetaInit;
+private:
+    HomeostasisParameters<Flt> params;
 
+    // Smoothed average activities
     alignas(alignof(vector<Flt>)) vector<Flt> Xavg;
-    alignas(alignof(vector<Flt>)) vector<Flt> Theta;
 
-    virtual void init() {
-        oneMinusBeta = (1. - beta);
-        this->stepCount = 0;
-        this->zero_vector_variable(this->X);
+    // Thresholds
+    alignas(alignof(vector<Flt>)) vector<Flt> Theta;
+public:
+    virtual void init(const HomeostasisParameters<Flt> params) {
+        RD_Sheet<Flt>::init();
+        this->params = params;
         this->zero_vector_variable(this->Xavg);
         this->zero_vector_variable(this->Theta);
     }
@@ -322,8 +339,8 @@ public:
         this->resize_vector_variable(this->Xavg);
         this->resize_vector_variable(this->Theta);
         for (size_t hi = 0; hi < this->nhex; ++hi) {
-            this->Xavg[hi] = mu;
-            this->Theta[hi] = thetaInit;
+            this->Xavg[hi] = params.mu;
+            this->Theta[hi] = params.thetaInit;
         }
     }
 
@@ -337,15 +354,22 @@ public:
         sheetStep(this->nhex, projections, this->Theta, this->fields, this->X);
     }
 
+    /**
+     * Perform homeostasis, i.e. calculate average activations and update thresholds
+     *
+     * From paper: "The effect of this scaling mechanism is to bring the average activity of each V1 unit closer to the
+     * specified target."
+     */
     void homeostasis() {
-#pragma omp parallel for
-        for (size_t hi = 0; hi < this->nhex; ++hi) {
-            this->Xavg[hi] = oneMinusBeta * this->X[hi] + beta * this->Xavg[hi];
-        }
-#pragma omp parallel for
-        for (size_t hi = 0; hi < this->nhex; ++hi) {
-            this->Theta[hi] = this->Theta[hi] + lambda * (this->Xavg[hi] - mu);
-        }
+        // Calculate average given degree of smoothing (beta) as per eq. 7
+#pragma omp parallel for default(none)
+        for (size_t hi = 0; hi < this->nhex; ++hi)
+            Xavg[hi] = (1. - params.beta) * this->X[hi] + params.beta * Xavg[hi];
+
+        // Update thresholds as per eq. 8
+#pragma omp parallel for default(none)
+        for (size_t hi = 0; hi < this->nhex; ++hi)
+            Theta[hi] = Theta[hi] + params.lambda * (Xavg[hi] - params.mu);
     }
 };
 
