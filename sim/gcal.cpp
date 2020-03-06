@@ -37,21 +37,26 @@ public:
 
     vector<double> pref, sel;
     bool homeostasis;
+
+    // Number of settling steps
     size_t settle;
+
     float beta, lambda, mu, thetaInit, xRange, yRange, afferAlpha, excitAlpha, inhibAlpha;
     float afferStrength, excitStrength, inhibStrength, LGNstrength, scale;
     float sigmaA, sigmaB, afferRadius, excitRadius, inhibRadius, afferSigma, excitSigma, inhibSigma, LGNCenterSigma, LGNSurroundSigma;
 
     void init(Json::Value root) {
-        // GET PARAMS FROM JSON
-        homeostasis = root.get("homeostasis", true).asBool();
+        // Read parameters from JSON
         settle = root.get("settle", 16).asUInt();
 
         // homeostasis
+        homeostasis = root.get("homeostasis", true).asBool();
         beta = root.get("beta", 0.991).asFloat();
         lambda = root.get("lambda", 0.01).asFloat();
         mu = root.get("thetaInit", 0.15).asFloat();
         thetaInit = root.get("mu", 0.024).asFloat();
+
+        // Gaussian
         xRange = root.get("xRange", 2.0).asFloat();
         yRange = root.get("yRange", 2.0).asFloat();
 
@@ -114,17 +119,15 @@ public:
 
         for (auto &p: LGN_OFF.Projections) p.renormalize();
 
-        // CORTEX SHEET
-        CX.beta = beta;
-        CX.lambda = lambda;
-        CX.mu = mu;
-        CX.thetaInit = thetaInit;
+        // Cortex Sheet (V1)
         CX.svgpath = root.get("CX_svgpath", "boundaries/trialmod.svg").asString();
-        CX.init();
+        CX.init({beta = beta, lambda = lambda, mu = mu, thetaInit = thetaInit});
         CX.allocate();
 
+        // afferent projection from ON/OFF cells
         CX.addProjection(LGN_ON.Xptr, LGN_ON.hg, afferRadius, afferStrength * 0.5, afferAlpha, afferSigma, true);
         CX.addProjection(LGN_OFF.Xptr, LGN_OFF.hg, afferRadius, afferStrength * 0.5, afferAlpha, afferSigma, true);
+        // recurrent lateral excitatory/inhibitory projection from other V1 cells
         CX.addProjection(CX.Xptr, CX.hg, excitRadius, excitStrength, excitAlpha, excitSigma, true);
         CX.addProjection(CX.Xptr, CX.hg, inhibRadius, inhibStrength, inhibAlpha, inhibSigma, true);
 
@@ -185,24 +188,18 @@ public:
         plt.scalarfields(disp2, LGN_ON.hg, L);
     }
 
-    /** Cortical step without display output */
-    void stepCortex() {
+    /**
+     * Cortical step
+     *
+     * @param f called for every settling step with grid and activations
+     */
+    void stepCortex(const std::function<void(HexGrid*, vector<double>&)> f) {
         CX.zero_X();
-        for (size_t j = 0; j < settle; j++) CX.step();
-        for (auto &p: CX.Projections) p.learn();
-        CX.renormalize();
-        if (homeostasis) CX.homeostasis();
-        time++;
-    }
-
-    /** Cortical step with display output */
-    void stepCortex(morph::Gdisplay disp) {
-        vector<double> fx(3, 0.);
-        RD_Plot<double> plt(fx, fx, fx);
-        CX.zero_X();
+        // From paper: "Once all 16 settling steps are complete, the settled V1 activation pattern is deemed to be the
+        // V1 response to the presented pattern."
         for (size_t j = 0; j < settle; j++) {
             CX.step();
-            plt.scalarfields(disp, CX.hg, CX.X);
+            f(CX.hg, CX.X);
         }
         for (auto &p: CX.Projections) p.learn();
         CX.renormalize();
@@ -398,11 +395,12 @@ int main(int argc, char **argv) {
 
     switch (MODE) {
         case 0: { // No plotting
+            auto plotActivations = [](HexGrid*, vector<double>&) {};
             for (size_t b = 0; b < nBlocks; b++) {
                 Net.map();
                 for (size_t i = 0; i < steps; i++) {
                     Net.stepAfferent(INTYPE);
-                    Net.stepCortex();
+                    Net.stepCortex(plotActivations);
                 }
                 if (!outputPath.empty())
                     Net.save(StrFormat("%s/weights_%i.h5", outputPath, Net.time));
@@ -417,6 +415,13 @@ int main(int argc, char **argv) {
             displays.push_back(morph::Gdisplay(1200, 400, 0, 0, "Cortical Projection", 1.7, 0.0, 0.0));
             displays.push_back(morph::Gdisplay(600, 300, 0, 0, "LGN ON/OFF", 1.7, 0.0, 0.0));
             displays.push_back(morph::Gdisplay(600, 600, 0, 0, "Map", 1.7, 0.0, 0.0));
+
+            vector<double> fx(3, 0.);
+            RD_Plot<double> plt(fx, fx, fx);
+            auto plotActivations = [&displays, fx, &plt](HexGrid* hg, vector<double>& X) {
+                plt.scalarfields(displays[1], hg, X);
+            };
+
             for (auto &d: displays) {
                 d.resetDisplay(vector<double>(3, 0), vector<double>(3, 0), vector<double>(3, 0));
                 d.redrawDisplay();
@@ -427,7 +432,7 @@ int main(int argc, char **argv) {
                 for (size_t i = 0; i < steps; i++) {
                     Net.stepAfferent(INTYPE);
                     Net.plotAfferent(displays[0], displays[3]);
-                    Net.stepCortex(displays[1]);
+                    Net.stepCortex(plotActivations);
                     Net.plotWeights(displays[2], 500);
                 }
                 if (!outputPath.empty())
@@ -444,6 +449,13 @@ int main(int argc, char **argv) {
             displays.push_back(morph::Gdisplay(1200, 400, 0, 0, "Cortical Projection", 1.7, 0.0, 0.0));
             displays.push_back(morph::Gdisplay(600, 300, 0, 0, "LGN ON/OFF", 1.7, 0.0, 0.0));
             displays.push_back(morph::Gdisplay(600, 600, 0, 0, "Map", 1.7, 0.0, 0.0));
+
+            vector<double> fx(3, 0.);
+            RD_Plot<double> plt(fx, fx, fx);
+            auto plotActivations = [&displays, fx, &plt](HexGrid* hg, vector<double>& X) {
+                plt.scalarfields(displays[1], hg, X);
+            };
+
             for (auto &d: displays) {
                 d.resetDisplay(vector<double>(3, 0), vector<double>(3, 0), vector<double>(3, 0));
                 d.redrawDisplay();
@@ -452,7 +464,7 @@ int main(int argc, char **argv) {
             Net.plotMap(displays[4]);
             Net.stepAfferent(INTYPE);
             Net.plotAfferent(displays[0], displays[3]);
-            Net.stepCortex(displays[1]);
+            Net.stepCortex(plotActivations);
             Net.plotWeights(displays[2], 500);
             for (size_t i = 0; i < displays.size(); i++) {
                 displays[i].redrawDisplay();
