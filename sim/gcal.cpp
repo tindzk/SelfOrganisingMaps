@@ -121,7 +121,7 @@ public:
 
         // Cortex Sheet (V1)
         CX.svgpath = root.get("CX_svgpath", "boundaries/trialmod.svg").asString();
-        CX.init({beta = beta, lambda = lambda, mu = mu, thetaInit = thetaInit});
+        CX.init({.beta = beta, .mu = mu, .lambda = lambda, .thetaInit = thetaInit});
         CX.allocate();
 
         // afferent projection from ON/OFF cells
