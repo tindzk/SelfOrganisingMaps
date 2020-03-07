@@ -107,7 +107,7 @@ public:
         LGN_ON.addProjection(IN.Xptr, IN.hg, afferRadius, +LGNstrength, 0.0, LGNCenterSigma, false);
         LGN_ON.addProjection(IN.Xptr, IN.hg, afferRadius, -LGNstrength, 0.0, LGNSurroundSigma, false);
 
-        for (auto &p: LGN_ON.Projections) p.renormalize();
+        LGN_ON.renormalize({{0}, {1}});
 
         // LGN OFF CELLS
         LGN_OFF.svgpath = root.get("IN_svgpath", "boundaries/trialmod.svg").asString();
@@ -117,7 +117,7 @@ public:
         LGN_OFF.addProjection(IN.Xptr, IN.hg, afferRadius, -LGNstrength, 0.0, LGNCenterSigma, false);
         LGN_OFF.addProjection(IN.Xptr, IN.hg, afferRadius, +LGNstrength, 0.0, LGNSurroundSigma, false);
 
-        for (auto &p: LGN_OFF.Projections) p.renormalize();
+        LGN_OFF.renormalize({{0}, {1}});
 
         // Cortex Sheet (V1)
         CX.svgpath = root.get("CX_svgpath", "boundaries/trialmod.svg").asString();
@@ -131,13 +131,11 @@ public:
         CX.addProjection(CX.Xptr, CX.hg, excitRadius, excitStrength, excitAlpha, excitSigma, true);
         CX.addProjection(CX.Xptr, CX.hg, inhibRadius, inhibStrength, inhibAlpha, inhibSigma, true);
 
-        // SETUP FIELDS FOR JOINT NORMALIZATION
-        vector<int> p1(2, 0);
-        p1[1] = 1;
-        CX.setNormalize(p1);
-        CX.setNormalize(vector<int>(1, 2));
-        CX.setNormalize(vector<int>(1, 3));
-        CX.renormalize();
+        CX.renormalize({
+            {0 /* LGN ON */, 1 /* LGN OFF */},
+            {2 /* recurrent excitatory projection */},
+            {3 /* recurrent inhibitory projection */}
+        });
 
         pref.resize(CX.nhex, 0.);
         sel.resize(CX.nhex, 0.);
@@ -202,7 +200,11 @@ public:
             f(CX.hg, CX.X);
         }
         for (auto &p: CX.Projections) p.learn();
-        CX.renormalize();
+        CX.renormalize({
+            {0 /* LGN ON */, 1 /* LGN OFF */},
+            {2 /* recurrent excitatory projection */},
+            {3 /* recurrent inhibitory projection */}
+        });
         if (homeostasis) CX.homeostasis();
         time++;
     }

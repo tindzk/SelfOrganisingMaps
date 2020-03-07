@@ -144,26 +144,6 @@ public:
         }
     }
 
-    void renormalize() {
-#pragma omp parallel for
-        for (size_t i = 0; i < nDst; i++) {
-            Flt sumWeights = 0.0;
-            for (size_t j = 0; j < counts[i]; j++) {
-                sumWeights += weights[i][j];
-            }
-            for (size_t j = 0; j < counts[i]; j++) {
-                weights[i][j] /= sumWeights;
-            }
-        }
-    }
-
-    void multiplyWeights(int i, double scale) {
-#pragma omp parallel for
-        for (size_t j = 0; j < counts[i]; j++) {
-            weights[i][j] *= scale;
-        }
-    }
-
     vector<double> getWeightPlot(int i) {
 #pragma omp parallel for
         for (size_t j = 0; j < weightPlot.size(); j++) {
@@ -185,7 +165,6 @@ public:
     vector<Projection<Flt>> Projections;
     alignas(alignof(vector<Flt>)) vector<Flt> X;
     alignas(alignof(vector<Flt *>)) vector<Flt *> Xptr;
-    vector<vector<int>> P;            // identity of projections to (potentially) joint normalize
 
     virtual void init() {
         this->stepCount = 0;
@@ -214,21 +193,8 @@ public:
         }
     }
 
-    void setNormalize(vector<int> proj) {
-        for (int &p : proj) {
-            for (size_t i = 0; i < this->P.size(); i++) {
-                for (size_t j = 0; j < this->P[i].size(); j++) {
-                    if (p == this->P[i][j]) {
-                        cout << "Caution - projection may be mutiply joint normalized" << endl;
-                    }
-                }
-            }
-        }
-        this->P.push_back(proj);
-    }
-
-    void renormalize() {
-        for (auto &projections: this->P) {
+    void renormalize(const vector<vector<size_t>>& jointNormalise) {
+        for (auto &projections: jointNormalise) {
 #pragma omp parallel for default(none) shared(projections)
             for (size_t i = 0; i < this->nhex; i++) {
                 Flt sumWeights = 0.0;
