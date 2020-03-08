@@ -104,8 +104,8 @@ public:
         LGN_ON.init();
         LGN_ON.allocate();
 
-        LGN_ON.addProjection(IN.Xptr, IN.hg, afferRadius, +LGNstrength, 0.0, LGNCenterSigma, false);
-        LGN_ON.addProjection(IN.Xptr, IN.hg, afferRadius, -LGNstrength, 0.0, LGNSurroundSigma, false);
+        LGN_ON.addProjection(IN, afferRadius, +LGNstrength, 0.0, LGNCenterSigma, false);
+        LGN_ON.addProjection(IN, afferRadius, -LGNstrength, 0.0, LGNSurroundSigma, false);
 
         renormalise(LGN_ON, {0});
         renormalise(LGN_ON, {1});
@@ -115,8 +115,8 @@ public:
         LGN_OFF.init();
         LGN_OFF.allocate();
 
-        LGN_OFF.addProjection(IN.Xptr, IN.hg, afferRadius, -LGNstrength, 0.0, LGNCenterSigma, false);
-        LGN_OFF.addProjection(IN.Xptr, IN.hg, afferRadius, +LGNstrength, 0.0, LGNSurroundSigma, false);
+        LGN_OFF.addProjection(IN, afferRadius, -LGNstrength, 0.0, LGNCenterSigma, false);
+        LGN_OFF.addProjection(IN, afferRadius, +LGNstrength, 0.0, LGNSurroundSigma, false);
 
         renormalise(LGN_OFF, {0});
         renormalise(LGN_OFF, {1});
@@ -127,11 +127,11 @@ public:
         CX.allocate();
 
         // afferent projection from ON/OFF cells
-        CX.addProjection(LGN_ON.Xptr, LGN_ON.hg, afferRadius, afferStrength * 0.5, afferAlpha, afferSigma, true);
-        CX.addProjection(LGN_OFF.Xptr, LGN_OFF.hg, afferRadius, afferStrength * 0.5, afferAlpha, afferSigma, true);
+        CX.addProjection(LGN_ON, afferRadius, afferStrength * 0.5, afferAlpha, afferSigma, true);
+        CX.addProjection(LGN_OFF, afferRadius, afferStrength * 0.5, afferAlpha, afferSigma, true);
         // recurrent lateral excitatory/inhibitory projection from other V1 cells
-        CX.addProjection(CX.Xptr, CX.hg, excitRadius, excitStrength, excitAlpha, excitSigma, true);
-        CX.addProjection(CX.Xptr, CX.hg, inhibRadius, inhibStrength, inhibAlpha, inhibSigma, true);
+        CX.addProjection(CX, excitRadius, excitStrength, excitAlpha, excitSigma, true);
+        CX.addProjection(CX, inhibRadius, inhibStrength, inhibAlpha, inhibSigma, true);
 
         renormalise(CX, {0 /* LGN ON */, 1 /* LGN OFF */});
         renormalise(CX, {2 /* recurrent excitatory projection */});

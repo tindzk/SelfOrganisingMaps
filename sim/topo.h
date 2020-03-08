@@ -37,8 +37,8 @@ class Projection {
 public:
     Flt strength;                   // strength of projection - multiplication after dot products
     Flt alpha;                      // learning rate
-    size_t nSrc;              // number of units on source sheet
-    size_t nDst;              // number of units on destination sheet
+
+    vector<Flt> *Xsrc;  // activations of source sheet
 
     vector<size_t> counts;                // number of connections in connection field for each unit
     vector<Flt> norms;                // 1./counts
@@ -46,8 +46,6 @@ public:
     vector<vector<size_t> > srcId;            // identity of connected units on the source sheet
     vector<vector<Flt> > weights;        // connection weights
     vector<vector<Flt> > distances;        // pre-compute distances between units in source and destination sheets
-    vector<Flt *> fSrc;                // pointers to the field elements on the source sheet
-    vector<Flt *> fDst;                // pointers to the field elements on the destination sheet
     vector<double> weightPlot;            // for constructing activity plots
 
     /**
@@ -56,15 +54,13 @@ public:
      * @param radius radius within which connections are made
      * @param normalizeAlphas whether to normalize learning rate by individual unit connection density
      */
-    Projection(vector<Flt *> fSrc, vector<Flt *> fDst, HexGrid *hgSrc, HexGrid *hgDst, Flt radius, Flt strength,
-               Flt alpha, Flt sigma, bool normalizeAlphas) {
-        this->fSrc = fSrc;
-        this->fDst = fDst;
+    Projection(vector<Flt>* Xsrc, HexGrid *hgSrc, HexGrid *hgDst, Flt radius, Flt strength, Flt alpha, Flt sigma, bool normalizeAlphas) {
+        this->Xsrc = Xsrc;
         this->strength = strength;
         this->alpha = alpha;
 
-        nDst = hgDst->vhexen.size();
-        nSrc = hgSrc->vhexen.size();
+        auto nDst = hgDst->vhexen.size();
+        auto nSrc = hgSrc->vhexen.size();
 
         counts.resize(nDst);
         norms.resize(nDst);
@@ -106,7 +102,7 @@ public:
 
     vector<Flt> getWeights() {
         vector<Flt> weightStore;
-        for (size_t i = 0; i < nDst; i++) {
+        for (size_t i = 0; i < weights.size(); i++) {
             for (size_t j = 0; j < counts[i]; j++) {
                 weightStore.push_back(weights[i][j]);
             }
@@ -116,7 +112,7 @@ public:
 
     void setWeights(vector<Flt> weightStore) {
         int k = 0;
-        for (size_t i = 0; i < nDst; i++) {
+        for (size_t i = 0; i < weights.size(); i++) {
             for (size_t j = 0; j < counts[i]; j++) {
                 weights[i][j] = weightStore[k];
                 k++;
@@ -144,7 +140,6 @@ protected:
 public:
     vector<Projection<Flt>> Projections;
     alignas(alignof(vector<Flt>)) vector<Flt> X;
-    alignas(alignof(vector<Flt *>)) vector<Flt *> Xptr;
 
     virtual void init() {
         this->stepCount = 0;
@@ -154,15 +149,13 @@ public:
     virtual void allocate() {
         morph::RD_Base<Flt>::allocate();
         this->resize_vector_variable(this->X);
-        for (size_t hi = 0; hi < this->nhex; ++hi) {
-            Xptr.push_back(&this->X[hi]);
-        }
     }
 
-    void addProjection(vector<Flt *> inXptr, HexGrid *hgSrc, float radius, float strength, float alpha, float sigma,
-                       bool normalizeAlphas) {
-        Projections.push_back(
-                Projection<Flt>(inXptr, this->Xptr, hgSrc, this->hg, radius, strength, alpha, sigma, normalizeAlphas));
+    /**
+     * @param sheet  source sheet
+     */
+    void addProjection(RD_Sheet<Flt> &sheet, float radius, float strength, float alpha, float sigma, bool normalizeAlphas) {
+        Projections.push_back(Projection<Flt>(&sheet.X, sheet.hg, this->hg, radius, strength, alpha, sigma, normalizeAlphas));
         this->fields.resize(Projections.size() * this->nhex, 0.0);
     }
 
@@ -216,7 +209,7 @@ void sheetStep(
         for (size_t hi = 0; hi < nhex; hi++) {
             auto field = 0.;
             for (size_t hj = 0; hj < p.counts[hi]; hj++)
-                field += *p.fSrc[p.srcId[hi][hj]] * p.weights[hi][hj];
+                field += (*p.Xsrc)[p.srcId[hi][hj]] * p.weights[hi][hj];
             field *= p.strength;
 
             fields[pi * nhex + hi] = field;
@@ -240,11 +233,17 @@ void sheetStep(
         X[hi] = fmax(X[hi] - xOffsets[hi], 0.);
 }
 
-inline double hebbian(const Projection<double> &p, const size_t i, const size_t j) {
+inline double hebbian(
+        const Projection<double> &p,
+        const vector<double>& Xsrc,
+        const vector<double>& Xdst,
+        const size_t i,
+        const size_t j
+) {
     auto omega_ij_p = p.weights[i][j];
     auto alpha_p = p.alphas[i];
-    auto eta_i = *p.fSrc[p.srcId[i][j]];
-    auto eta_j = *p.fDst[i];
+    auto eta_i = Xsrc[p.srcId[i][j]];
+    auto eta_j = Xdst[i];
 
     return omega_ij_p + alpha_p * eta_j * eta_i;
 }
@@ -265,10 +264,10 @@ void learn(RD_Sheet<double>& sheet, const vector<size_t> projections) {
     for (auto projectionId: projections) {
         auto &p = sheet.Projections[projectionId];
 
-#pragma omp parallel for default(none) shared(p)
-        for (size_t i = 0; i < p.nDst; i++)
+#pragma omp parallel for default(none) shared(p) shared(sheet)
+        for (size_t i = 0; i < sheet.nhex; i++)
             for (size_t j = 0; j < p.counts[i]; j++)
-                if (p.alphas[i] > 0.0) p.weights[i][j] = hebbian(p, i, j);
+                if (p.alphas[i] > 0.0) p.weights[i][j] = hebbian(p, *p.Xsrc, sheet.X, i, j);
     }
 
     // From paper: "All afferent connection weights from RGC/LGN sheets are normalized together in the model, which
