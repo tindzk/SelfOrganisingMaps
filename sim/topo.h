@@ -104,26 +104,6 @@ public:
         }
     }
 
-    /**
-     * Hebbian adaptation of the weights
-     *
-     * Requires calling RD_Sheet.renormalize() afterwards to constrain the weights using divisive postsynaptic weight
-     * normalisation.
-     *
-     * From paper: "This rule results in connections that reflect correlations between the presynaptic ON/OFF unit
-     * activities and the postsynaptic V1 response."
-     *
-     * Implements the numerator of eq. 10
-     */
-    void learn() {
-        if (alpha > 0.0) {
-#pragma omp parallel for default(none)
-            for (size_t i = 0; i < nDst; i++)
-                for (size_t j = 0; j < counts[i]; j++)
-                    weights[i][j] += *fSrc[srcId[i][j]] * *fDst[i] * alphas[i];
-        }
-    }
-
     vector<Flt> getWeights() {
         vector<Flt> weightStore;
         for (size_t i = 0; i < nDst; i++) {
@@ -192,28 +172,27 @@ public:
             this->X[hi] = 0.;
         }
     }
+};
 
-    void renormalize(const vector<vector<size_t>>& jointNormalise) {
-        for (auto &projections: jointNormalise) {
-#pragma omp parallel for default(none) shared(projections)
-            for (size_t i = 0; i < this->nhex; i++) {
-                Flt sumWeights = 0.0;
+template<class Flt>
+void renormalise(RD_Sheet<Flt>& sheet, const vector<size_t>& projections) {
+#pragma omp parallel for default(none) shared(projections) shared(sheet)
+    for (size_t i = 0; i < sheet.nhex; i++) {
+        Flt sumWeights = 0.0;
 
-                for (auto projectionId: projections) {
-                    auto &p = this->Projections[projectionId];
-                    for (size_t j = 0; j < p.counts[i]; j++)
-                        sumWeights += p.weights[i][j];
-                }
+        for (auto projectionId: projections) {
+            auto &p = sheet.Projections[projectionId];
+            for (size_t j = 0; j < p.counts[i]; j++)
+                sumWeights += p.weights[i][j];
+        }
 
-                for (auto projectionId: projections) {
-                    auto &p = this->Projections[projectionId];
-                    for (size_t j = 0; j < p.counts[i]; j++)
-                        p.weights[i][j] /= sumWeights;
-                }
-            }
+        for (auto projectionId: projections) {
+            auto &p = sheet.Projections[projectionId];
+            for (size_t j = 0; j < p.counts[i]; j++)
+                p.weights[i][j] /= sumWeights;
         }
     }
-};
+}
 
 /**
  * Assumes that assert(X.size() == nhex)
@@ -259,6 +238,42 @@ void sheetStep(
 #pragma omp parallel for default(none) shared(nhex) shared(X) shared(xOffsets)
     for (size_t hi = 0; hi < nhex; ++hi)
         X[hi] = fmax(X[hi] - xOffsets[hi], 0.);
+}
+
+inline double hebbian(const Projection<double> &p, const size_t i, const size_t j) {
+    auto omega_ij_p = p.weights[i][j];
+    auto alpha_p = p.alphas[i];
+    auto eta_i = *p.fSrc[p.srcId[i][j]];
+    auto eta_j = *p.fDst[i];
+
+    return omega_ij_p + alpha_p * eta_j * eta_i;
+}
+
+/**
+ * Hebbian weight adaptation
+ *
+ * Updates weights of supplied projections, constraining them using divisive postsynaptic weight normalisation.
+ *
+ * From paper: "This rule results in connections that reflect correlations between the presynaptic ON/OFF unit
+ * activities and the postsynaptic V1 response."
+ *
+ * Implements eq. 10
+ *
+ * @param projections Subset of projections. In the case of V1, this allows excluding self connections.
+ */
+void learn(RD_Sheet<double>& sheet, const vector<size_t> projections) {
+    for (auto projectionId: projections) {
+        auto &p = sheet.Projections[projectionId];
+
+#pragma omp parallel for default(none) shared(p)
+        for (size_t i = 0; i < p.nDst; i++)
+            for (size_t j = 0; j < p.counts[i]; j++)
+                if (p.alphas[i] > 0.0) p.weights[i][j] = hebbian(p, i, j);
+    }
+
+    // From paper: "All afferent connection weights from RGC/LGN sheets are normalized together in the model, which
+    // allows V1 neurons to become selective for any subset of the RGC/LGN inputs."
+    renormalise(sheet, projections);
 }
 
 template<class Flt>

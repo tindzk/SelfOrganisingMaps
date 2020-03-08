@@ -107,7 +107,8 @@ public:
         LGN_ON.addProjection(IN.Xptr, IN.hg, afferRadius, +LGNstrength, 0.0, LGNCenterSigma, false);
         LGN_ON.addProjection(IN.Xptr, IN.hg, afferRadius, -LGNstrength, 0.0, LGNSurroundSigma, false);
 
-        LGN_ON.renormalize({{0}, {1}});
+        renormalise(LGN_ON, {0});
+        renormalise(LGN_ON, {1});
 
         // LGN OFF CELLS
         LGN_OFF.svgpath = root.get("IN_svgpath", "boundaries/trialmod.svg").asString();
@@ -117,7 +118,8 @@ public:
         LGN_OFF.addProjection(IN.Xptr, IN.hg, afferRadius, -LGNstrength, 0.0, LGNCenterSigma, false);
         LGN_OFF.addProjection(IN.Xptr, IN.hg, afferRadius, +LGNstrength, 0.0, LGNSurroundSigma, false);
 
-        LGN_OFF.renormalize({{0}, {1}});
+        renormalise(LGN_OFF, {0});
+        renormalise(LGN_OFF, {1});
 
         // Cortex Sheet (V1)
         CX.svgpath = root.get("CX_svgpath", "boundaries/trialmod.svg").asString();
@@ -131,11 +133,9 @@ public:
         CX.addProjection(CX.Xptr, CX.hg, excitRadius, excitStrength, excitAlpha, excitSigma, true);
         CX.addProjection(CX.Xptr, CX.hg, inhibRadius, inhibStrength, inhibAlpha, inhibSigma, true);
 
-        CX.renormalize({
-            {0 /* LGN ON */, 1 /* LGN OFF */},
-            {2 /* recurrent excitatory projection */},
-            {3 /* recurrent inhibitory projection */}
-        });
+        renormalise(CX, {0 /* LGN ON */, 1 /* LGN OFF */});
+        renormalise(CX, {2 /* recurrent excitatory projection */});
+        renormalise(CX, {3 /* recurrent inhibitory projection */});
 
         pref.resize(CX.nhex, 0.);
         sel.resize(CX.nhex, 0.);
@@ -193,18 +193,22 @@ public:
      */
     void stepCortex(const std::function<void(HexGrid*, vector<double>&)> f) {
         CX.zero_X();
+
         // From paper: "Once all 16 settling steps are complete, the settled V1 activation pattern is deemed to be the
         // V1 response to the presented pattern."
         for (size_t j = 0; j < settle; j++) {
             CX.step();
             f(CX.hg, CX.X);
         }
-        for (auto &p: CX.Projections) p.learn();
-        CX.renormalize({
-            {0 /* LGN ON */, 1 /* LGN OFF */},
-            {2 /* recurrent excitatory projection */},
-            {3 /* recurrent inhibitory projection */}
-        });
+
+        // From paper: "V1 afferent connection weights [...] from the ON/OFF sheets are adjusted once per iteration
+        // (after V1 settling is completed) using a simple Hebbian learning rule."
+        // "Weights are normalized separately for each of the other projections, to ensure that Hebbian learning does
+        // not disrupt the balance between feedforward drive, lateral and feedback inhibition."
+        learn(CX, {0, 1}); /* LGN ON and OFF */
+        learn(CX, {2}); /* recurrent excitatory projection */
+        learn(CX, {3}); /* recurrent inhibitory projection */
+
         if (homeostasis) CX.homeostasis();
         time++;
     }
