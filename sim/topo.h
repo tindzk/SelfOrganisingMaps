@@ -34,9 +34,15 @@ public:
  */
 template<class Flt>
 class Projection {
+private:
+    HexGrid *hgSrc;
+    HexGrid *hgDst;
 public:
+    Flt radius;
     Flt strength;                   // strength of projection - multiplication after dot products
     Flt alpha;                      // learning rate
+    Flt sigma;
+    bool normalizeAlphas;
 
     vector<Flt> *Xsrc;  // activations of source sheet
 
@@ -56,9 +62,16 @@ public:
      */
     Projection(vector<Flt>* Xsrc, HexGrid *hgSrc, HexGrid *hgDst, Flt radius, Flt strength, Flt alpha, Flt sigma, bool normalizeAlphas) {
         this->Xsrc = Xsrc;
+        this->hgSrc = hgSrc;
+        this->hgDst = hgDst;
+        this->radius = radius;
         this->strength = strength;
         this->alpha = alpha;
+        this->sigma = sigma;
+        this->normalizeAlphas = normalizeAlphas;
+    }
 
+    void allocate() {
         auto nDst = hgDst->vhexen.size();
         auto nSrc = hgSrc->vhexen.size();
 
@@ -144,11 +157,13 @@ public:
     virtual void init() {
         this->stepCount = 0;
         this->zero_vector_variable(this->X);
+        morph::RD_Base<Flt>::allocate();
+        this->resize_vector_variable(this->X);
     }
 
     virtual void allocate() {
-        morph::RD_Base<Flt>::allocate();
-        this->resize_vector_variable(this->X);
+        this->fields.resize(Projections.size() * this->nhex, 0.0);
+        for (auto &p: Projections) p.allocate();
     }
 
     /**
@@ -156,7 +171,6 @@ public:
      */
     void addProjection(RD_Sheet<Flt> &sheet, float radius, float strength, float alpha, float sigma, bool normalizeAlphas) {
         Projections.push_back(Projection<Flt>(&sheet.X, sheet.hg, this->hg, radius, strength, alpha, sigma, normalizeAlphas));
-        this->fields.resize(Projections.size() * this->nhex, 0.0);
     }
 
     void zero_X() {
