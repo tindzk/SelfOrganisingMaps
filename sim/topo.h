@@ -148,17 +148,22 @@ public:
 
 template<class Flt>
 class RD_Sheet : public morph::RD_Base<Flt> {
-protected:
-    vector<Flt> fields;                // current activity patterns
 public:
     vector<Projection<Flt>> Projections;
+
+    vector<Flt> fields;                // current activity patterns
+
+    // Thresholds
+    alignas(alignof(vector<Flt>)) vector<Flt> theta;
+
     alignas(alignof(vector<Flt>)) vector<Flt> X;
 
     virtual void init() {
-        this->stepCount = 0;
         this->zero_vector_variable(this->X);
         morph::RD_Base<Flt>::allocate();
         this->resize_vector_variable(this->X);
+        this->resize_vector_variable(this->theta);
+        this->zero_vector_variable(this->theta);
     }
 
     virtual void allocate() {
@@ -173,13 +178,14 @@ public:
         Projections.push_back(Projection<Flt>(&sheet.X, sheet.hg, this->hg, radius, strength, alpha, sigma, normalizeAlphas));
     }
 
-    void zero_X() {
-#pragma omp parallel for
-        for (size_t hi = 0; hi < this->nhex; ++hi) {
-            this->X[hi] = 0.;
-        }
-    }
+    virtual void step() {}
 };
+
+template<class Flt>
+inline void zero_X(RD_Sheet<Flt>& sheet) {
+#pragma omp parallel for default(none) shared(sheet)
+    for (size_t hi = 0; hi < sheet.nhex; ++hi) sheet.X[hi] = 0.;
+}
 
 template<class Flt>
 void renormalise(RD_Sheet<Flt>& sheet, const vector<size_t>& projections) {
@@ -201,17 +207,8 @@ void renormalise(RD_Sheet<Flt>& sheet, const vector<size_t>& projections) {
     }
 }
 
-/**
- * Assumes that assert(X.size() == nhex)
- */
 template<class Flt>
-void sheetStep(
-        size_t nhex,
-        const vector<Projection<Flt>>& projections,
-        const vector<Flt>& xOffsets,
-        vector<Flt>& fields,
-        vector<Flt>& X
-) {
+void sheetStep(RD_Sheet<Flt>& sheet, const vector<Projection<Flt>>& projections) {
     // Calculate activity patterns
     for (size_t pi = 0; pi < projections.size(); pi++) {
         auto& p = projections[pi];
@@ -219,32 +216,36 @@ void sheetStep(
         /* Dot product of each weight vector with the corresponding source sheet field values, multiplied by the
          * strength of the projection
          */
-#pragma omp parallel for default(none) shared(nhex) shared(fields) shared(p) shared(pi)
-        for (size_t hi = 0; hi < nhex; hi++) {
+#pragma omp parallel for default(none) shared(sheet) shared(p) shared(pi)
+        for (size_t hi = 0; hi < sheet.nhex; hi++) {
             auto field = 0.;
             for (size_t hj = 0; hj < p.counts[hi]; hj++)
                 field += (*p.Xsrc)[p.srcId[hi][hj]] * p.weights[hi][hj];
             field *= p.strength;
 
-            fields[pi * nhex + hi] = field;
+            sheet.fields[pi * sheet.nhex + hi] = field;
         }
     }
 
     // This must not be performed before calculating the activity patterns because `fSrc` could contain self connections
     // as in the case of the cortical sheet.
-#pragma omp parallel for default(none) shared(nhex) shared(X)
-    for (size_t hi = 0; hi < nhex; ++hi) X[hi] = 0.;
+#pragma omp parallel for default(none) shared(sheet)
+    for (size_t hi = 0; hi < sheet.nhex; ++hi) sheet.X[hi] = 0.;
 
     for (size_t pi = 0; pi < projections.size(); pi++) {
-#pragma omp parallel for default(none) shared(nhex) shared(X) shared(fields) shared(pi)
-        for (size_t hi = 0; hi < nhex; ++hi) {
-            X[hi] += fields[pi * nhex + hi];
-        }
+#pragma omp parallel for default(none) shared(sheet) shared(pi)
+        for (size_t hi = 0; hi < sheet.nhex; ++hi)
+            sheet.X[hi] += sheet.fields[pi * sheet.nhex + hi];
     }
 
-#pragma omp parallel for default(none) shared(nhex) shared(X) shared(xOffsets)
-    for (size_t hi = 0; hi < nhex; ++hi)
-        X[hi] = fmax(X[hi] - xOffsets[hi], 0.);
+#pragma omp parallel for default(none) shared(sheet)
+    for (size_t hi = 0; hi < sheet.nhex; ++hi)
+        sheet.X[hi] = fmax(sheet.X[hi] - sheet.theta[hi], 0.);
+}
+
+template<class Flt>
+inline void sheetStep(RD_Sheet<Flt>& sheet) {
+    sheetStep(sheet, sheet.Projections);
 }
 
 inline double hebbian(
@@ -290,22 +291,6 @@ void learn(RD_Sheet<double>& sheet, const vector<size_t> projections) {
 }
 
 template<class Flt>
-class LGN : public RD_Sheet<Flt> {
-private:
-    alignas(alignof(vector<Flt>)) vector<Flt> zeros;
-public:
-    virtual void allocate() {
-        RD_Sheet<Flt>::allocate();
-        this->resize_vector_variable(this->zeros);
-        this->zero_vector_variable(this->zeros);
-    }
-    virtual void step() {
-        this->stepCount++;
-        sheetStep(this->nhex, this->Projections, this->zeros, this->fields, this->X);
-    }
-};
-
-template<class Flt>
 struct HomeostasisParameters {
     // Degree of smoothing in average calculation
     Flt beta;
@@ -327,35 +312,21 @@ private:
 
     // Smoothed average activities
     alignas(alignof(vector<Flt>)) vector<Flt> Xavg;
-
-    // Thresholds
-    alignas(alignof(vector<Flt>)) vector<Flt> Theta;
 public:
     virtual void init(const HomeostasisParameters<Flt> params) {
         RD_Sheet<Flt>::init();
         this->params = params;
         this->zero_vector_variable(this->Xavg);
-        this->zero_vector_variable(this->Theta);
     }
 
     virtual void allocate() {
         RD_Sheet<Flt>::allocate();
         this->resize_vector_variable(this->Xavg);
-        this->resize_vector_variable(this->Theta);
+        this->resize_vector_variable(this->theta);
         for (size_t hi = 0; hi < this->nhex; ++hi) {
             this->Xavg[hi] = params.mu;
-            this->Theta[hi] = params.thetaInit;
+            this->theta[hi] = params.thetaInit;
         }
-    }
-
-    virtual void step() {
-        this->stepCount++;
-        sheetStep(this->nhex, this->Projections, this->Theta, this->fields, this->X);
-    }
-
-    virtual void step(const vector<Projection<Flt>>& projections) {
-        this->stepCount++;
-        sheetStep(this->nhex, projections, this->Theta, this->fields, this->X);
     }
 
     /**
@@ -371,7 +342,7 @@ public:
             Xavg[hi] = (1. - params.beta) * this->X[hi] + params.beta * Xavg[hi];
 
             // Update thresholds as per eq. 8
-            Theta[hi] = Theta[hi] + params.lambda * (Xavg[hi] - params.mu);
+            this->theta[hi] = this->theta[hi] + params.lambda * (Xavg[hi] - params.mu);
         }
     }
 };
@@ -379,10 +350,6 @@ public:
 template<class Flt>
 class PatternGenerator_Sheet : public RD_Sheet<Flt> {
 public:
-    virtual void step() {
-        this->stepCount++;
-    }
-
     void Gaussian(double x_center, double y_center, double theta, double sigmaA, double sigmaB) {
         double cosTheta = cos(theta);
         double sinTheta = sin(theta);
@@ -530,7 +497,7 @@ public:
     }
 
     virtual void step() {
-        this->zero_X();
+        zero_X(*this);
 #pragma omp parallel for
         for (size_t i = 0; i < this->nhex; i++) {
             for (size_t j = 0; j < counts[i]; j++) {

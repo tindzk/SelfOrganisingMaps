@@ -20,18 +20,16 @@ using absl::StrFormat;
 
 using namespace morph;
 
-/*** SPECIFIC MODEL DEFINED HERE ***/
-
 class gcal : public Network {
 public:
     HexCartSampler<double> HCM;
     PatternGenerator_Sheet<double> IN;
 
     // HexGrid of LGN ON cells
-    LGN<double> LGN_ON;
+    RD_Sheet<double> LGN_ON;
 
     // HexGrid of LGN OFF cells
-    LGN<double> LGN_OFF;
+    RD_Sheet<double> LGN_OFF;
 
     CortexSOM<double> CX;
 
@@ -171,8 +169,8 @@ public:
                 IN.X = HCM.X;
             }
         }
-        LGN_ON.step();
-        LGN_OFF.step();
+        sheetStep(LGN_ON);
+        sheetStep(LGN_OFF);
     }
 
     void plotAfferent(morph::Gdisplay disp1, morph::Gdisplay disp2) {
@@ -191,12 +189,12 @@ public:
      * @param f called for every settling step with grid and activations
      */
     void stepCortex(const std::function<void(HexGrid*, vector<double>&)> f) {
-        CX.zero_X();
+        zero_X(CX);
 
         // From paper: "Once all 16 settling steps are complete, the settled V1 activation pattern is deemed to be the
         // V1 response to the presented pattern."
         for (size_t j = 0; j < settle; j++) {
-            CX.step();
+            sheetStep(CX);
             f(CX.hg, CX.X);
         }
 
@@ -261,10 +259,10 @@ public:
             for (size_t j = 0; j < nPhase; j++) {
                 double phase = j * phaseInc;
                 IN.Grating(theta, phase, 30.0, 1.0);
-                LGN_ON.step();
-                LGN_OFF.step();
-                CX.zero_X();  // Required because of CX's self connections
-                CX.step(afferent);
+                sheetStep(LGN_ON);
+                sheetStep(LGN_OFF);
+                zero_X(CX);  // Required because of CX's self connections
+                sheetStep(CX, afferent);
                 for (size_t k = 0; k < maxPhase.size(); k++) {
                     if (maxPhase[k] < CX.X[k]) maxPhase[k] = CX.X[k];
                 }
