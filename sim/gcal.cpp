@@ -23,15 +23,21 @@ using namespace morph;
 class gcal : public Network {
 public:
     HexCartSampler<double> HCM;
+    HexGrid* hgHcm;
+
     PatternGenerator_Sheet<double> IN;
+    HexGrid* hgIn;
 
-    // HexGrid of LGN ON cells
+    // LGN ON cells
     RD_Sheet<double> LGN_ON;
+    HexGrid* hgLgnOn;
 
-    // HexGrid of LGN OFF cells
+    // LGN OFF cells
     RD_Sheet<double> LGN_OFF;
+    HexGrid* hgLgnOff;
 
     CortexSOM<double> CX;
+    HexGrid* hgCx;
 
     vector<double> pref, sel;
     bool homeostasis;
@@ -87,48 +93,47 @@ public:
         morph::Tools::createDir(logpath);
         HdfData data(StrFormat("%s/log.h5", logpath));
 
-        // Mapping Between Hexagonal and Cartesian Sheet
-        HCM.svgpath = root.get("IN_svgpath", "boundaries/trialmod.svg").asString();
-        HCM.init();
-        HCM.allocate();
+        // Mapping between Hexagonal and Cartesian Sheet
+        hgHcm = createHexGrid(root.get("IN_svgpath", "boundaries/trialmod.svg").asString());
+        HCM.init(hgHcm->num());
 
-        // INPUT SHEET
-        IN.svgpath = root.get("IN_svgpath", "boundaries/trialmod.svg").asString();
-        IN.init();
-        IN.allocate();
+        // Input sheet
+        hgIn = createHexGrid(root.get("IN_svgpath", "boundaries/trialmod.svg").asString());
+        IN.init(hgIn->num());
 
-        // LGN ON CELLS
-        LGN_ON.svgpath = root.get("LGN_svgpath", "boundaries/trialmod.svg").asString();
-        LGN_ON.init();
-        LGN_ON.addProjection(IN, afferRadius, +LGNstrength, 0.0, LGNCenterSigma, false);
-        LGN_ON.addProjection(IN, afferRadius, -LGNstrength, 0.0, LGNSurroundSigma, false);
-        LGN_ON.allocate();
+        // LGN ON cells
+        hgLgnOn = createHexGrid(root.get("LGN_svgpath", "boundaries/trialmod.svg").asString());
+        LGN_ON.init(hgLgnOn->num());
+        LGN_ON.connect({
+            Projection<double>(IN.X, squaresFromHexGrid(hgIn), squaresFromHexGrid(hgLgnOn), afferRadius, +LGNstrength, 0.0, LGNCenterSigma, false),
+            Projection<double>(IN.X, squaresFromHexGrid(hgIn), squaresFromHexGrid(hgLgnOn), afferRadius, -LGNstrength, 0.0, LGNSurroundSigma, false)
+        });
 
         renormalise(LGN_ON, {0});
         renormalise(LGN_ON, {1});
 
-        // LGN OFF CELLS
-        LGN_OFF.svgpath = root.get("IN_svgpath", "boundaries/trialmod.svg").asString();
-        LGN_OFF.init();
-        LGN_OFF.addProjection(IN, afferRadius, -LGNstrength, 0.0, LGNCenterSigma, false);
-        LGN_OFF.addProjection(IN, afferRadius, +LGNstrength, 0.0, LGNSurroundSigma, false);
-        LGN_OFF.allocate();
+        // LGN OFF cells
+        hgLgnOff = createHexGrid(root.get("IN_svgpath", "boundaries/trialmod.svg").asString());
+        LGN_OFF.init(hgLgnOff->num());
+        LGN_OFF.connect({
+            Projection<double>(IN.X, squaresFromHexGrid(hgIn), squaresFromHexGrid(hgLgnOff), afferRadius, -LGNstrength, 0.0, LGNCenterSigma, false),
+            Projection<double>(IN.X, squaresFromHexGrid(hgIn), squaresFromHexGrid(hgLgnOff), afferRadius, +LGNstrength, 0.0, LGNSurroundSigma, false)
+        });
 
         renormalise(LGN_OFF, {0});
         renormalise(LGN_OFF, {1});
 
         // Cortex Sheet (V1)
-        CX.svgpath = root.get("CX_svgpath", "boundaries/trialmod.svg").asString();
-        CX.init({.beta = beta, .mu = mu, .lambda = lambda, .thetaInit = thetaInit});
-
-        // afferent projection from ON/OFF cells
-        CX.addProjection(LGN_ON, afferRadius, afferStrength * 0.5, afferAlpha, afferSigma, true);
-        CX.addProjection(LGN_OFF, afferRadius, afferStrength * 0.5, afferAlpha, afferSigma, true);
-        // recurrent lateral excitatory/inhibitory projection from other V1 cells
-        CX.addProjection(CX, excitRadius, excitStrength, excitAlpha, excitSigma, true);
-        CX.addProjection(CX, inhibRadius, inhibStrength, inhibAlpha, inhibSigma, true);
-
-        CX.allocate();
+        hgCx = createHexGrid(root.get("CX_svgpath", "boundaries/trialmod.svg").asString());
+        CX.init(hgCx->num(), {.beta = beta, .mu = mu, .lambda = lambda, .thetaInit = thetaInit});
+        CX.connect({
+            // afferent projection from ON/OFF cells
+            Projection<double>(LGN_ON.X, squaresFromHexGrid(hgLgnOn), squaresFromHexGrid(hgCx), afferRadius, afferStrength * 0.5, afferAlpha, afferSigma, true),
+            Projection<double>(LGN_OFF.X, squaresFromHexGrid(hgLgnOff), squaresFromHexGrid(hgCx), afferRadius, afferStrength * 0.5, afferAlpha, afferSigma, true),
+            // recurrent lateral excitatory/inhibitory projection from other V1 cells
+            Projection<double>(CX.X, squaresFromHexGrid(hgCx), squaresFromHexGrid(hgCx), excitRadius, excitStrength, excitAlpha, excitSigma, true),
+            Projection<double>(CX.X, squaresFromHexGrid(hgCx), squaresFromHexGrid(hgCx), inhibRadius, inhibStrength, inhibAlpha, inhibSigma, true)
+        });
 
         renormalise(CX, {0 /* LGN ON */, 1 /* LGN OFF */});
         renormalise(CX, {2 /* recurrent excitatory projection */});
@@ -146,6 +151,7 @@ public:
         switch (type) {
             case 0: { // Gaussians
                 IN.Gaussian(
+                        hgIn,
                         (morph::Tools::randDouble() - 0.5) * xRange,
                         (morph::Tools::randDouble() - 0.5) * yRange,
                         morph::Tools::randDouble() * M_PI, sigmaA, sigmaB);
@@ -177,9 +183,9 @@ public:
         vector<double> fx(3, 0.);
         RD_Plot<double> plt(fx, fx, fx);
         auto a = activations(IN);
-        plt.scalarfields(dispIn, IN.hg, a, 0., 1.0);
+        plt.scalarfields(dispIn, hgIn, a, 0., 1.0);
         vector<vector<double>> L = { activations(LGN_ON), activations(LGN_OFF) };
-        plt.scalarfields(dispLgn, LGN_ON.hg, L);
+        plt.scalarfields(dispLgn, hgLgnOn, L);
     }
 
     /**
@@ -196,7 +202,7 @@ public:
             sheetStep(CX);
 
             auto a = activations(CX);
-            f(CX.hg, a);
+            f(hgCx, a);
         }
 
         // From paper: "V1 afferent connection weights [...] from the ON/OFF sheets are adjusted once per iteration
@@ -218,7 +224,7 @@ public:
         W.push_back(CX.Projections[0].getWeightPlot(id));
         W.push_back(CX.Projections[1].getWeightPlot(id));
         W.push_back(CX.Projections[3].getWeightPlot(id));
-        plt.scalarfields(disp, CX.hg, W);
+        plt.scalarfields(disp, hgCx, W);
     }
 
     void plotMap(morph::Gdisplay disp) {
@@ -231,7 +237,7 @@ public:
         double overPi = 1. / M_PI;
 
         int i = 0;
-        for (auto h : CX.hg->hexen) {
+        for (auto h : hgCx->hexen) {
             array<float, 3> cl = morph::Tools::HSVtoRGB(pref[i] * overPi, 1.0, sel[i] * maxSel);
             disp.drawHex(h.position(), array<float, 3>{0., 0., 0.}, (h.d * 0.5f), cl);
             i++;
@@ -260,7 +266,7 @@ public:
             std::fill(maxPhase.begin(), maxPhase.end(), -1e9);
             for (size_t j = 0; j < nPhase; j++) {
                 double phase = j * phaseInc;
-                IN.Grating(theta, phase, 30.0, 1.0);
+                IN.Grating(hgIn, theta, phase, 30.0, 1.0);
                 sheetStep(LGN_ON);
                 sheetStep(LGN_OFF);
                 zero_X(CX);  // Required because of CX's self connections
@@ -371,7 +377,7 @@ int main(int argc, char **argv) {
         case (1): {   // preload patterns
             int ncols = root.get("cameraCols", 100).asUInt();
             int nrows = root.get("cameraRows", 100).asUInt();
-            Net.HCM.initProjection(ncols, nrows, 0.01, 20.);
+            Net.HCM.initProjection(Net.hgHcm, ncols, nrows, 0.01, 20.);
             string filename = root.get("patterns", "configs/testPatterns.h5").asString();
             Net.HCM.preloadPatterns(filename);
         }
@@ -383,7 +389,7 @@ int main(int argc, char **argv) {
             int stepsize = root.get("cameraSampleStep", 7).asUInt();
             int xoff = root.get("cameraOffsetX", 100).asUInt();
             int yoff = root.get("cameraOffsetY", 0).asUInt();
-            Net.HCM.initProjection(ncols, nrows, 0.01, 20.);
+            Net.HCM.initProjection(Net.hgHcm, ncols, nrows, 0.01, 20.);
             if (!Net.HCM.initCamera(xoff, yoff, stepsize)) { return 0; }
         }
             break;

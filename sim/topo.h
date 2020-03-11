@@ -99,8 +99,8 @@ void initialiseConnections(
 template<class Flt>
 class Projection {
 private:
-    HexGrid *hgSrc;
-    HexGrid *hgDst;
+    size_t nSrc;
+    size_t nDst;
 public:
     Flt radius;
     Flt strength;                   // strength of projection - multiplication after dot products
@@ -110,10 +110,10 @@ public:
 
     Flt* Xsrc;  // activations of source sheet
 
-    vector<size_t> counts;                // number of connections in connection field for each unit
-    vector<Flt> alphas;                // learning rates for each unit may depend on e.g., the number of connections
-    vector<vector<size_t> > srcId;            // identity of connected units on the source sheet
-    vector<vector<Flt> > weights;        // connection weights
+    vector<size_t> counts;         // number of connections in connection field for each unit
+    vector<Flt> alphas;            // learning rates for each unit may depend on e.g., the number of connections
+    vector<vector<size_t>> srcId;  // identity of connected units on the source sheet
+    vector<vector<Flt>> weights;   // connection weights
 
     /**
      * Initialise the class with random weights (if sigma>0, the weights have a Gaussian pattern, else uniform random)
@@ -121,23 +121,28 @@ public:
      * @param radius radius within which connections are made
      * @param normaliseAlphas whether to normalise learning rate by individual unit connection density
      */
-    Projection(Flt* Xsrc, HexGrid *hgSrc, HexGrid *hgDst, Flt radius, Flt strength, Flt alpha, Flt sigma, bool normaliseAlphas) {
+    Projection(Flt* Xsrc,
+               const vector<Square>& src,
+               const vector<Square>& dst,
+               Flt radius,
+               Flt strength,
+               Flt alpha,
+               Flt sigma,
+               bool normaliseAlphas
+              ) {
+        this->nSrc = src.size();
+        this->nDst = dst.size();
         this->Xsrc = Xsrc;
-        this->hgSrc = hgSrc;
-        this->hgDst = hgDst;
         this->radius = radius;
         this->strength = strength;
         this->alpha = alpha;
         this->sigma = sigma;
         this->normaliseAlphas = normaliseAlphas;
-    }
 
-    void initialise() {
-        initialiseConnections(squaresFromHexGrid(hgSrc), squaresFromHexGrid(hgDst), radius, sigma, counts, srcId, weights);
+        initialiseConnections(src, dst, radius, sigma, counts, srcId, weights);
 
-        auto nDst = hgDst->vhexen.size();
         alphas.resize(nDst);
-#pragma omp parallel for default(none) shared(nDst)
+#pragma omp parallel for default(none) shared(normaliseAlphas) shared(alpha)
         for (size_t i = 0; i < nDst; i++)
             alphas[i] = !normaliseAlphas ? alpha : alpha / counts[i];
     }
@@ -164,7 +169,7 @@ public:
 
     vector<double> getWeightPlot(int i) {
         vector<double> weightPlot;
-        weightPlot.resize(hgSrc->vhexen.size());
+        weightPlot.resize(nSrc);
 #pragma omp parallel for
         for (size_t j = 0; j < weightPlot.size(); j++) {
             weightPlot[j] = 0.;
@@ -184,8 +189,20 @@ Flt* createVector(size_t n) {
     return result;
 }
 
+HexGrid* createHexGrid(string svgPath) {
+    HexGrid* hg = new HexGrid(0.01, 4, 0, morph::HexDomainShape::Boundary);
+
+    ReadCurves r;
+    r.init(svgPath);
+    hg->setBoundary(r.getCorticalPath());
+
+    hg->computeDistanceToBoundary();
+
+    return hg;
+}
+
 template<class Flt>
-class RD_Sheet : public morph::RD_Base<Flt> {
+class RD_Sheet {
 public:
     vector<Projection<Flt>> Projections;
 
@@ -198,11 +215,16 @@ public:
     // current activity patterns
     Flt* fields = nullptr;
 
-    virtual void init() {
-        morph::RD_Base<Flt>::allocate();
+    // number of cells
+    size_t nhex;
 
-        theta = createVector<Flt>(this->nhex);
-        X = createVector<Flt>(this->nhex);
+    /**
+     * @param num Number of units
+     */
+    virtual void init(size_t num) {
+        nhex = num;
+        theta = createVector<Flt>(num);
+        X = createVector<Flt>(num);
     }
 
     ~RD_Sheet() {
@@ -211,19 +233,10 @@ public:
         if (fields != nullptr) free(fields);
     }
 
-    /**
-     * @param sheet  source sheet
-     */
-    void addProjection(RD_Sheet<Flt> &sheet, float radius, float strength, float alpha, float sigma, bool normaliseAlphas) {
-        Projections.push_back(Projection<Flt>(sheet.X, sheet.hg, this->hg, radius, strength, alpha, sigma, normaliseAlphas));
-    }
-
-    virtual void allocate() {
+    void connect(const vector<Projection<Flt>>& projections) {
+        Projections = projections;
         fields = createVector<Flt>(Projections.size() * this->nhex);
-        for (auto &p: Projections) p.initialise();
     }
-
-    virtual void step() {}
 };
 
 template<class Flt>
@@ -372,13 +385,9 @@ private:
     // Smoothed average activities
     Flt* Xavg = nullptr;
 public:
-    virtual void init(const HomeostasisParameters<Flt> params) {
-        RD_Sheet<Flt>::init();
+    virtual void init(size_t num, const HomeostasisParameters<Flt> params) {
+        RD_Sheet<Flt>::init(num);
         this->params = params;
-    }
-
-    virtual void allocate() {
-        RD_Sheet<Flt>::allocate();
         this->Xavg = createVector<Flt>(this->nhex);
 
         for (size_t hi = 0; hi < this->nhex; ++hi) {
@@ -413,32 +422,31 @@ public:
 template<class Flt>
 class PatternGenerator_Sheet : public RD_Sheet<Flt> {
 public:
-    void Gaussian(double x_center, double y_center, double theta, double sigmaA, double sigmaB) {
+    void Gaussian(HexGrid *hg, double x_center, double y_center, double theta, double sigmaA, double sigmaB) {
         double cosTheta = cos(theta);
         double sinTheta = sin(theta);
         double overSigmaA = 1. / sigmaA;
         double overSigmaB = 1. / sigmaB;
 #pragma omp parallel for
         for (size_t hi = 0; hi < this->nhex; ++hi) {
-            Flt dx = this->hg->vhexen[hi]->x - x_center;
-            Flt dy = this->hg->vhexen[hi]->y - y_center;
+            Flt dx = hg->vhexen[hi]->x - x_center;
+            Flt dy = hg->vhexen[hi]->y - y_center;
             this->X[hi] = exp(-((dx * cosTheta - dy * sinTheta) * (dx * cosTheta - dy * sinTheta)) * overSigmaA
                               - ((dx * sinTheta + dy * cosTheta) * (dx * sinTheta + dy * cosTheta)) * overSigmaB);
         }
     }
 
-    void Grating(double theta, double phase, double width, double amplitude) {
+    void Grating(HexGrid *hg, double theta, double phase, double width, double amplitude) {
         double cosTheta = cos(theta);
         double sinTheta = sin(theta);
 
 #pragma omp parallel for
         for (size_t hi = 0; hi < this->nhex; ++hi) {
             this->X[hi] = sin(
-                    width * (this->hg->vhexen[hi]->x * sinTheta + this->hg->vhexen[hi]->y * cosTheta + phase));
+                    width * (hg->vhexen[hi]->x * sinTheta + hg->vhexen[hi]->y * cosTheta + phase));
         }
     }
 };
-
 
 // This helper function is general-purpose and should really be moved into morphologica
 vector<double> getPolyPixelVals(Mat frame, vector<Point> pp) {
@@ -497,10 +505,10 @@ public:
 
     vector<vector<double>> PreLoadedPatterns;
 
-    void initProjection(int nx, int ny, Flt radius, Flt sigma) {
+    void initProjection(HexGrid *hg, int nx, int ny, Flt radius, Flt sigma) {
         this->strength = 1.;
         C.init(nx, ny);
-        initialiseConnections(C.vsquare, squaresFromHexGrid(this->hg), radius, sigma, counts, srcId, weights);
+        initialiseConnections(C.vsquare, squaresFromHexGrid(hg), radius, sigma, counts, srcId, weights);
     }
 
     int initCamera(int xoff, int yoff, int stepsize) {
