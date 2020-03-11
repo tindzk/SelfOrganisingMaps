@@ -28,6 +28,70 @@ public:
     }
 };
 
+class Square {
+public:
+    double x, y;
+    double X;
+
+    Square(double x, double y) {
+        this->x = x;
+        this->y = y;
+        X = 0.;
+    }
+};
+
+vector<Square> squaresFromHexGrid(const HexGrid* hexGrid) {
+    vector<Square> squares;
+    for (auto &v: hexGrid->vhexen) squares.push_back(Square(v->x, v->y));
+    return squares;
+}
+
+/**
+ * Initialise connections between `src` and `dst`
+ *
+ * Based on spatial distances between the source and target sheet, determine which units to connect. Then, calculate the
+ * corresponding weights.
+ *
+ * Implements eq. 9
+ */
+template<class Flt>
+void initialiseConnections(
+        const vector<Square>& src,
+        const vector<Square>& dst,
+        Flt radius,
+        Flt sigma,
+        vector<size_t>& counts,
+        vector<vector<size_t>>& srcId,
+        vector<vector<Flt>>& weights
+) {
+    auto nSrc = src.size();
+    auto nDst = dst.size();
+
+    counts.resize(nDst);
+    srcId.resize(nDst);
+    weights.resize(nDst);
+
+#pragma omp parallel for default(none) shared(nSrc) shared(nDst) shared(sigma) shared(weights) shared(src) shared(dst) shared(srcId) shared(counts) shared(radius)
+    for (size_t i = 0; i < nDst; i++) {
+        for (size_t j = 0; j < nSrc; j++) {
+            Flt dx = src[j].x - dst[i].x;
+            Flt dy = src[j].y - dst[i].y;
+
+            Flt distSquared = dx * dx + dy * dy;
+
+            if (distSquared < radius * radius) {
+                counts[i]++;
+                srcId[i].push_back(j);
+
+                // TODO add u from eq. 9
+                weights[i].push_back((sigma <= 0.) ? 1. : exp(-distSquared / (2. * sigma * sigma)));
+            }
+        }
+
+        for (size_t j = 0; j < counts[i]; j++) weights[i][j] /= counts[i];
+    }
+}
+
 /**
  * A projection class for connecting units on a source sheet to units on a destination sheet with topographically
  * aligned weighted connections from a radius of units on the source sheet to each destination sheet unit.
@@ -42,25 +106,22 @@ public:
     Flt strength;                   // strength of projection - multiplication after dot products
     Flt alpha;                      // learning rate
     Flt sigma;
-    bool normalizeAlphas;
+    bool normaliseAlphas;
 
     vector<Flt> *Xsrc;  // activations of source sheet
 
     vector<size_t> counts;                // number of connections in connection field for each unit
-    vector<Flt> norms;                // 1./counts
     vector<Flt> alphas;                // learning rates for each unit may depend on e.g., the number of connections
     vector<vector<size_t> > srcId;            // identity of connected units on the source sheet
     vector<vector<Flt> > weights;        // connection weights
-    vector<vector<Flt> > distances;        // pre-compute distances between units in source and destination sheets
-    vector<double> weightPlot;            // for constructing activity plots
 
     /**
      * Initialise the class with random weights (if sigma>0, the weights have a Gaussian pattern, else uniform random)
      *
      * @param radius radius within which connections are made
-     * @param normalizeAlphas whether to normalize learning rate by individual unit connection density
+     * @param normaliseAlphas whether to normalise learning rate by individual unit connection density
      */
-    Projection(vector<Flt>* Xsrc, HexGrid *hgSrc, HexGrid *hgDst, Flt radius, Flt strength, Flt alpha, Flt sigma, bool normalizeAlphas) {
+    Projection(vector<Flt>* Xsrc, HexGrid *hgSrc, HexGrid *hgDst, Flt radius, Flt strength, Flt alpha, Flt sigma, bool normaliseAlphas) {
         this->Xsrc = Xsrc;
         this->hgSrc = hgSrc;
         this->hgDst = hgDst;
@@ -68,49 +129,17 @@ public:
         this->strength = strength;
         this->alpha = alpha;
         this->sigma = sigma;
-        this->normalizeAlphas = normalizeAlphas;
+        this->normaliseAlphas = normaliseAlphas;
     }
 
-    void allocate() {
+    void initialise() {
+        initialiseConnections(squaresFromHexGrid(hgSrc), squaresFromHexGrid(hgDst), radius, sigma, counts, srcId, weights);
+
         auto nDst = hgDst->vhexen.size();
-        auto nSrc = hgSrc->vhexen.size();
-
-        counts.resize(nDst);
-        norms.resize(nDst);
-        srcId.resize(nDst);
-        weights.resize(nDst);
         alphas.resize(nDst);
-        distances.resize(nDst);
-        weightPlot.resize(nSrc);
-
-        Flt radiusSquared = radius * radius;    // precompute for speed
-
-        double OverTwoSigmaSquared = 1. / (sigma * sigma * 2.0);    // precompute normalisation constant
-
-        // initialize connections for each destination sheet unit
-#pragma omp parallel for
-        for (size_t i = 0; i < nDst; i++) {
-            for (size_t j = 0; j < nSrc; j++) {
-                Flt dx = (hgSrc->vhexen[j]->x - hgDst->vhexen[i]->x);
-                Flt dy = (hgSrc->vhexen[j]->y - hgDst->vhexen[i]->y);
-                Flt distSquared = dx * dx + dy * dy;
-                if (distSquared < radiusSquared) {
-                    counts[i]++;
-                    srcId[i].push_back(j);
-                    Flt w = 1.0;
-                    if (sigma > 0.) {
-                        w = exp(-distSquared * OverTwoSigmaSquared);
-                    }
-                    weights[i].push_back(w);
-                    distances[i].push_back(sqrt(distSquared));
-                }
-            }
-            norms[i] = 1.0 / (Flt) counts[i];
-            alphas[i] = alpha;
-            if (normalizeAlphas) {
-                alphas[i] *= norms[i];
-            }
-        }
+#pragma omp parallel for default(none) shared(nDst)
+        for (size_t i = 0; i < nDst; i++)
+            alphas[i] = !normaliseAlphas ? alpha : alpha / counts[i];
     }
 
     vector<Flt> getWeights() {
@@ -134,6 +163,8 @@ public:
     }
 
     vector<double> getWeightPlot(int i) {
+        vector<double> weightPlot;
+        weightPlot.resize(hgSrc->vhexen.size());
 #pragma omp parallel for
         for (size_t j = 0; j < weightPlot.size(); j++) {
             weightPlot[j] = 0.;
@@ -168,14 +199,14 @@ public:
 
     virtual void allocate() {
         this->fields.resize(Projections.size() * this->nhex, 0.0);
-        for (auto &p: Projections) p.allocate();
+        for (auto &p: Projections) p.initialise();
     }
 
     /**
      * @param sheet  source sheet
      */
-    void addProjection(RD_Sheet<Flt> &sheet, float radius, float strength, float alpha, float sigma, bool normalizeAlphas) {
-        Projections.push_back(Projection<Flt>(&sheet.X, sheet.hg, this->hg, radius, strength, alpha, sigma, normalizeAlphas));
+    void addProjection(RD_Sheet<Flt> &sheet, float radius, float strength, float alpha, float sigma, bool normaliseAlphas) {
+        Projections.push_back(Projection<Flt>(&sheet.X, sheet.hg, this->hg, radius, strength, alpha, sigma, normaliseAlphas));
     }
 
     virtual void step() {}
@@ -227,7 +258,7 @@ void sheetStep(RD_Sheet<Flt>& sheet, const vector<Projection<Flt>>& projections)
         }
     }
 
-    // This must not be performed before calculating the activity patterns because `fSrc` could contain self connections
+    // This must not be performed before calculating the activity patterns because `Xsrc` could contain self connections
     // as in the case of the cortical sheet.
 #pragma omp parallel for default(none) shared(sheet)
     for (size_t hi = 0; hi < sheet.nhex; ++hi) sheet.X[hi] = 0.;
@@ -342,7 +373,7 @@ public:
             Xavg[hi] = (1. - params.beta) * this->X[hi] + params.beta * Xavg[hi];
 
             // Update thresholds as per eq. 8
-            this->theta[hi] = this->theta[hi] + params.lambda * (Xavg[hi] - params.mu);
+            this->theta[hi] += params.lambda * (Xavg[hi] - params.mu);
         }
     }
 };
@@ -395,19 +426,6 @@ vector<double> getPolyPixelVals(Mat frame, vector<Point> pp) {
     return polyPixelVals;
 }
 
-
-class Square {
-public:
-    double x, y;
-    double X;
-
-    Square(double x, double y) {
-        this->x = x;
-        this->y = y;
-        X = 0.;
-    }
-};
-
 class CartGrid {
 public:
     int n, nx, ny;
@@ -438,52 +456,19 @@ class HexCartSampler : public RD_Sheet<Flt> {
 public:
     CartGrid C;
     VideoCapture cap;
-    vector<vector<size_t> > srcId;
-    vector<vector<Flt> > weights;
-    vector<vector<Flt> > distances;
+    vector<vector<size_t>> srcId;
+    vector<vector<Flt>> weights;
     vector<size_t> counts;
-    vector<Flt> norms;
     Flt strength;
     vector<Point> mask;
     size_t stepsize;
 
-    vector<vector<double> > PreLoadedPatterns;
+    vector<vector<double>> PreLoadedPatterns;
 
     void initProjection(int nx, int ny, Flt radius, Flt sigma) {
+        this->strength = 1.;
         C.init(nx, ny);
-
-        this->strength = 1.0;
-        srcId.resize(this->nhex);
-        counts.resize(this->nhex);
-        weights.resize(this->nhex);
-        distances.resize(this->nhex);
-        norms.resize(this->nhex);
-
-        Flt radiusSquared = radius * radius;    // precompute for speed
-        Flt OverTwoSigmaSquared = 1. / (2.0 * sigma * sigma);
-#pragma omp parallel for
-        for (size_t i = 0; i < this->nhex; i++) {
-            for (int j = 0; j < C.n; j++) {
-                Flt dx = (this->hg->vhexen[i]->x - C.vsquare[j].x);
-                Flt dy = (this->hg->vhexen[i]->y - C.vsquare[j].y);
-                Flt distSquared = dx * dx + dy * dy;
-                if (distSquared < radiusSquared) {
-                    counts[i]++;
-                    srcId[i].push_back(j);
-                    Flt w = 1.0;
-                    if (sigma > 0.) {
-                        w = exp(-distSquared * OverTwoSigmaSquared);
-                    }
-                    weights[i].push_back(w);
-                    distances[i].push_back(sqrt(distSquared));
-                }
-            }
-            norms[i] = 1.0 / (Flt) counts[i];
-            for (size_t j = 0; j < counts[i]; j++) {
-                weights[i][j] *= norms[i];
-            }
-        }
-
+        initialiseConnections(C.vsquare, squaresFromHexGrid(this->hg), radius, sigma, counts, srcId, weights);
     }
 
     int initCamera(int xoff, int yoff, int stepsize) {
