@@ -153,12 +153,12 @@ public:
                 break;
             case 1: { // Preloaded
                 HCM.stepPreloaded();
-                IN.X = HCM.X;
+                copyActivations(HCM, IN);
             }
                 break;
             case 2: { // Camera input
                 HCM.stepCamera();
-                IN.X = HCM.X;
+                copyActivations(HCM, IN);
             }
                 break;
             default: {
@@ -166,21 +166,20 @@ public:
                     HCM.C.vsquare[i].X = morph::Tools::randDouble();
                 }
                 HCM.step();
-                IN.X = HCM.X;
+                copyActivations(HCM, IN);
             }
         }
         sheetStep(LGN_ON);
         sheetStep(LGN_OFF);
     }
 
-    void plotAfferent(morph::Gdisplay disp1, morph::Gdisplay disp2) {
+    void plotAfferent(morph::Gdisplay dispIn, morph::Gdisplay dispLgn) {
         vector<double> fx(3, 0.);
         RD_Plot<double> plt(fx, fx, fx);
-        plt.scalarfields(disp1, IN.hg, IN.X, 0., 1.0);
-        vector<vector<double> > L;
-        L.push_back(LGN_ON.X);
-        L.push_back(LGN_OFF.X);
-        plt.scalarfields(disp2, LGN_ON.hg, L);
+        auto a = activations(IN);
+        plt.scalarfields(dispIn, IN.hg, a, 0., 1.0);
+        vector<vector<double>> L = { activations(LGN_ON), activations(LGN_OFF) };
+        plt.scalarfields(dispLgn, LGN_ON.hg, L);
     }
 
     /**
@@ -195,7 +194,9 @@ public:
         // V1 response to the presented pattern."
         for (size_t j = 0; j < settle; j++) {
             sheetStep(CX);
-            f(CX.hg, CX.X);
+
+            auto a = activations(CX);
+            f(CX.hg, a);
         }
 
         // From paper: "V1 afferent connection weights [...] from the ON/OFF sheets are adjusted once per iteration
@@ -249,9 +250,10 @@ public:
         vector<double> Vy(CX.nhex);
 
         // Do not perform any steps for CX's self connections
-        vector<Projection<double>> afferent;
-        afferent.push_back(CX.Projections[0]);  // LGN ON
-        afferent.push_back(CX.Projections[1]);  // LGN OFF
+        vector<Projection<double>> afferent = {
+                CX.Projections[0] /* LGN ON */,
+                CX.Projections[1] /* LGN OFF */
+        };
 
         for (size_t i = 0; i < nOr; i++) {
             double theta = i * M_PI / (double) nOr;

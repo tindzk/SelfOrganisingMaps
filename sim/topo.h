@@ -108,7 +108,7 @@ public:
     Flt sigma;
     bool normaliseAlphas;
 
-    vector<Flt> *Xsrc;  // activations of source sheet
+    Flt* Xsrc;  // activations of source sheet
 
     vector<size_t> counts;                // number of connections in connection field for each unit
     vector<Flt> alphas;                // learning rates for each unit may depend on e.g., the number of connections
@@ -121,7 +121,7 @@ public:
      * @param radius radius within which connections are made
      * @param normaliseAlphas whether to normalise learning rate by individual unit connection density
      */
-    Projection(vector<Flt>* Xsrc, HexGrid *hgSrc, HexGrid *hgDst, Flt radius, Flt strength, Flt alpha, Flt sigma, bool normaliseAlphas) {
+    Projection(Flt* Xsrc, HexGrid *hgSrc, HexGrid *hgDst, Flt radius, Flt strength, Flt alpha, Flt sigma, bool normaliseAlphas) {
         this->Xsrc = Xsrc;
         this->hgSrc = hgSrc;
         this->hgDst = hgDst;
@@ -178,44 +178,71 @@ public:
 };
 
 template<class Flt>
+Flt* createVector(size_t n) {
+    Flt* result = (Flt*) malloc(n * sizeof(Flt));
+    memset(result, 0, sizeof(Flt) * n);
+    return result;
+}
+
+template<class Flt>
 class RD_Sheet : public morph::RD_Base<Flt> {
 public:
     vector<Projection<Flt>> Projections;
 
-    vector<Flt> fields;                // current activity patterns
+    // thresholds
+    Flt* theta = nullptr;
 
-    // Thresholds
-    alignas(alignof(vector<Flt>)) vector<Flt> theta;
+    // activations
+    Flt* X = nullptr;
 
-    alignas(alignof(vector<Flt>)) vector<Flt> X;
+    // current activity patterns
+    Flt* fields = nullptr;
 
     virtual void init() {
-        this->zero_vector_variable(this->X);
         morph::RD_Base<Flt>::allocate();
-        this->resize_vector_variable(this->X);
-        this->resize_vector_variable(this->theta);
-        this->zero_vector_variable(this->theta);
+
+        theta = createVector<Flt>(this->nhex);
+        X = createVector<Flt>(this->nhex);
     }
 
-    virtual void allocate() {
-        this->fields.resize(Projections.size() * this->nhex, 0.0);
-        for (auto &p: Projections) p.initialise();
+    ~RD_Sheet() {
+        if (theta != nullptr) free(theta);
+        if (X != nullptr) free(X);
+        if (fields != nullptr) free(fields);
     }
 
     /**
      * @param sheet  source sheet
      */
     void addProjection(RD_Sheet<Flt> &sheet, float radius, float strength, float alpha, float sigma, bool normaliseAlphas) {
-        Projections.push_back(Projection<Flt>(&sheet.X, sheet.hg, this->hg, radius, strength, alpha, sigma, normaliseAlphas));
+        Projections.push_back(Projection<Flt>(sheet.X, sheet.hg, this->hg, radius, strength, alpha, sigma, normaliseAlphas));
+    }
+
+    virtual void allocate() {
+        fields = createVector<Flt>(Projections.size() * this->nhex);
+        for (auto &p: Projections) p.initialise();
     }
 
     virtual void step() {}
 };
 
 template<class Flt>
+void copyActivations(const RD_Sheet<Flt>& src, const RD_Sheet<Flt>& dst) {
+    assert(src.nhex == dst.nhex);
+    for (size_t i = 0; i < src.nhex; i++) dst.X[i] = src.X[i];
+}
+
+template<class Flt>
 inline void zero_X(RD_Sheet<Flt>& sheet) {
 #pragma omp parallel for default(none) shared(sheet)
     for (size_t hi = 0; hi < sheet.nhex; ++hi) sheet.X[hi] = 0.;
+}
+
+template<class Flt>
+inline vector<Flt> activations(const RD_Sheet<Flt>& sheet) {
+    vector<Flt> result;
+    for (size_t i = 0; i < sheet.nhex; i++) result.push_back(sheet.X[i]);
+    return result;
 }
 
 template<class Flt>
@@ -251,7 +278,7 @@ void sheetStep(RD_Sheet<Flt>& sheet, const vector<Projection<Flt>>& projections)
         for (size_t hi = 0; hi < sheet.nhex; hi++) {
             auto field = 0.;
             for (size_t hj = 0; hj < p.counts[hi]; hj++)
-                field += (*p.Xsrc)[p.srcId[hi][hj]] * p.weights[hi][hj];
+                field += p.Xsrc[p.srcId[hi][hj]] * p.weights[hi][hj];
             field *= p.strength;
 
             sheet.fields[pi * sheet.nhex + hi] = field;
@@ -279,10 +306,11 @@ inline void sheetStep(RD_Sheet<Flt>& sheet) {
     sheetStep(sheet, sheet.Projections);
 }
 
+template<class Flt>
 inline double hebbian(
-        const Projection<double> &p,
-        const vector<double>& Xsrc,
-        const vector<double>& Xdst,
+        const Projection<Flt> &p,
+        const Flt* Xsrc,
+        const Flt* Xdst,
         const size_t i,
         const size_t j
 ) {
@@ -313,7 +341,7 @@ void learn(RD_Sheet<double>& sheet, const vector<size_t> projections) {
 #pragma omp parallel for default(none) shared(p) shared(sheet)
         for (size_t i = 0; i < sheet.nhex; i++)
             for (size_t j = 0; j < p.counts[i]; j++)
-                if (p.alphas[i] > 0.0) p.weights[i][j] = hebbian(p, *p.Xsrc, sheet.X, i, j);
+                if (p.alphas[i] > 0.0) p.weights[i][j] = hebbian(p, p.Xsrc, sheet.X, i, j);
     }
 
     // From paper: "All afferent connection weights from RGC/LGN sheets are normalized together in the model, which
@@ -342,22 +370,25 @@ private:
     HomeostasisParameters<Flt> params;
 
     // Smoothed average activities
-    alignas(alignof(vector<Flt>)) vector<Flt> Xavg;
+    Flt* Xavg = nullptr;
 public:
     virtual void init(const HomeostasisParameters<Flt> params) {
         RD_Sheet<Flt>::init();
         this->params = params;
-        this->zero_vector_variable(this->Xavg);
     }
 
     virtual void allocate() {
         RD_Sheet<Flt>::allocate();
-        this->resize_vector_variable(this->Xavg);
-        this->resize_vector_variable(this->theta);
+        this->Xavg = createVector<Flt>(this->nhex);
+
         for (size_t hi = 0; hi < this->nhex; ++hi) {
             this->Xavg[hi] = params.mu;
             this->theta[hi] = params.thetaInit;
         }
+    }
+
+    ~CortexSOM() {
+        if (Xavg != nullptr) free(Xavg);
     }
 
     /**
@@ -378,6 +409,7 @@ public:
     }
 };
 
+/** Input sheet */
 template<class Flt>
 class PatternGenerator_Sheet : public RD_Sheet<Flt> {
 public:
