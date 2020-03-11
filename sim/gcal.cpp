@@ -20,18 +20,16 @@ using absl::StrFormat;
 
 using namespace morph;
 
-/*** SPECIFIC MODEL DEFINED HERE ***/
-
 class gcal : public Network {
 public:
     HexCartSampler<double> HCM;
     PatternGenerator_Sheet<double> IN;
 
     // HexGrid of LGN ON cells
-    LGN<double> LGN_ON;
+    RD_Sheet<double> LGN_ON;
 
     // HexGrid of LGN OFF cells
-    LGN<double> LGN_OFF;
+    RD_Sheet<double> LGN_OFF;
 
     CortexSOM<double> CX;
 
@@ -102,42 +100,39 @@ public:
         // LGN ON CELLS
         LGN_ON.svgpath = root.get("LGN_svgpath", "boundaries/trialmod.svg").asString();
         LGN_ON.init();
+        LGN_ON.addProjection(IN, afferRadius, +LGNstrength, 0.0, LGNCenterSigma, false);
+        LGN_ON.addProjection(IN, afferRadius, -LGNstrength, 0.0, LGNSurroundSigma, false);
         LGN_ON.allocate();
 
-        LGN_ON.addProjection(IN.Xptr, IN.hg, afferRadius, +LGNstrength, 0.0, LGNCenterSigma, false);
-        LGN_ON.addProjection(IN.Xptr, IN.hg, afferRadius, -LGNstrength, 0.0, LGNSurroundSigma, false);
-
-        for (auto &p: LGN_ON.Projections) p.renormalize();
+        renormalise(LGN_ON, {0});
+        renormalise(LGN_ON, {1});
 
         // LGN OFF CELLS
         LGN_OFF.svgpath = root.get("IN_svgpath", "boundaries/trialmod.svg").asString();
         LGN_OFF.init();
+        LGN_OFF.addProjection(IN, afferRadius, -LGNstrength, 0.0, LGNCenterSigma, false);
+        LGN_OFF.addProjection(IN, afferRadius, +LGNstrength, 0.0, LGNSurroundSigma, false);
         LGN_OFF.allocate();
 
-        LGN_OFF.addProjection(IN.Xptr, IN.hg, afferRadius, -LGNstrength, 0.0, LGNCenterSigma, false);
-        LGN_OFF.addProjection(IN.Xptr, IN.hg, afferRadius, +LGNstrength, 0.0, LGNSurroundSigma, false);
-
-        for (auto &p: LGN_OFF.Projections) p.renormalize();
+        renormalise(LGN_OFF, {0});
+        renormalise(LGN_OFF, {1});
 
         // Cortex Sheet (V1)
         CX.svgpath = root.get("CX_svgpath", "boundaries/trialmod.svg").asString();
-        CX.init({beta = beta, lambda = lambda, mu = mu, thetaInit = thetaInit});
-        CX.allocate();
+        CX.init({.beta = beta, .mu = mu, .lambda = lambda, .thetaInit = thetaInit});
 
         // afferent projection from ON/OFF cells
-        CX.addProjection(LGN_ON.Xptr, LGN_ON.hg, afferRadius, afferStrength * 0.5, afferAlpha, afferSigma, true);
-        CX.addProjection(LGN_OFF.Xptr, LGN_OFF.hg, afferRadius, afferStrength * 0.5, afferAlpha, afferSigma, true);
+        CX.addProjection(LGN_ON, afferRadius, afferStrength * 0.5, afferAlpha, afferSigma, true);
+        CX.addProjection(LGN_OFF, afferRadius, afferStrength * 0.5, afferAlpha, afferSigma, true);
         // recurrent lateral excitatory/inhibitory projection from other V1 cells
-        CX.addProjection(CX.Xptr, CX.hg, excitRadius, excitStrength, excitAlpha, excitSigma, true);
-        CX.addProjection(CX.Xptr, CX.hg, inhibRadius, inhibStrength, inhibAlpha, inhibSigma, true);
+        CX.addProjection(CX, excitRadius, excitStrength, excitAlpha, excitSigma, true);
+        CX.addProjection(CX, inhibRadius, inhibStrength, inhibAlpha, inhibSigma, true);
 
-        // SETUP FIELDS FOR JOINT NORMALIZATION
-        vector<int> p1(2, 0);
-        p1[1] = 1;
-        CX.setNormalize(p1);
-        CX.setNormalize(vector<int>(1, 2));
-        CX.setNormalize(vector<int>(1, 3));
-        CX.renormalize();
+        CX.allocate();
+
+        renormalise(CX, {0 /* LGN ON */, 1 /* LGN OFF */});
+        renormalise(CX, {2 /* recurrent excitatory projection */});
+        renormalise(CX, {3 /* recurrent inhibitory projection */});
 
         pref.resize(CX.nhex, 0.);
         sel.resize(CX.nhex, 0.);
@@ -174,8 +169,8 @@ public:
                 IN.X = HCM.X;
             }
         }
-        LGN_ON.step();
-        LGN_OFF.step();
+        sheetStep(LGN_ON);
+        sheetStep(LGN_OFF);
     }
 
     void plotAfferent(morph::Gdisplay disp1, morph::Gdisplay disp2) {
@@ -194,15 +189,23 @@ public:
      * @param f called for every settling step with grid and activations
      */
     void stepCortex(const std::function<void(HexGrid*, vector<double>&)> f) {
-        CX.zero_X();
+        zero_X(CX);
+
         // From paper: "Once all 16 settling steps are complete, the settled V1 activation pattern is deemed to be the
         // V1 response to the presented pattern."
         for (size_t j = 0; j < settle; j++) {
-            CX.step();
+            sheetStep(CX);
             f(CX.hg, CX.X);
         }
-        for (auto &p: CX.Projections) p.learn();
-        CX.renormalize();
+
+        // From paper: "V1 afferent connection weights [...] from the ON/OFF sheets are adjusted once per iteration
+        // (after V1 settling is completed) using a simple Hebbian learning rule."
+        // "Weights are normalized separately for each of the other projections, to ensure that Hebbian learning does
+        // not disrupt the balance between feedforward drive, lateral and feedback inhibition."
+        learn(CX, {0, 1}); /* LGN ON and OFF */
+        learn(CX, {2}); /* recurrent excitatory projection */
+        learn(CX, {3}); /* recurrent inhibitory projection */
+
         if (homeostasis) CX.homeostasis();
         time++;
     }
@@ -256,10 +259,10 @@ public:
             for (size_t j = 0; j < nPhase; j++) {
                 double phase = j * phaseInc;
                 IN.Grating(theta, phase, 30.0, 1.0);
-                LGN_ON.step();
-                LGN_OFF.step();
-                CX.zero_X();  // Required because of CX's self connections
-                CX.step(afferent);
+                sheetStep(LGN_ON);
+                sheetStep(LGN_OFF);
+                zero_X(CX);  // Required because of CX's self connections
+                sheetStep(CX, afferent);
                 for (size_t k = 0; k < maxPhase.size(); k++) {
                     if (maxPhase[k] < CX.X[k]) maxPhase[k] = CX.X[k];
                 }

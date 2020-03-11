@@ -28,105 +28,123 @@ public:
     }
 };
 
+class Square {
+public:
+    double x, y;
+    double X;
+
+    Square(double x, double y) {
+        this->x = x;
+        this->y = y;
+        X = 0.;
+    }
+};
+
+vector<Square> squaresFromHexGrid(const HexGrid* hexGrid) {
+    vector<Square> squares;
+    for (auto &v: hexGrid->vhexen) squares.push_back(Square(v->x, v->y));
+    return squares;
+}
+
+/**
+ * Initialise connections between `src` and `dst`
+ *
+ * Based on spatial distances between the source and target sheet, determine which units to connect. Then, calculate the
+ * corresponding weights.
+ *
+ * Implements eq. 9
+ */
+template<class Flt>
+void initialiseConnections(
+        const vector<Square>& src,
+        const vector<Square>& dst,
+        Flt radius,
+        Flt sigma,
+        vector<size_t>& counts,
+        vector<vector<size_t>>& srcId,
+        vector<vector<Flt>>& weights
+) {
+    auto nSrc = src.size();
+    auto nDst = dst.size();
+
+    counts.resize(nDst);
+    srcId.resize(nDst);
+    weights.resize(nDst);
+
+#pragma omp parallel for default(none) shared(nSrc) shared(nDst) shared(sigma) shared(weights) shared(src) shared(dst) shared(srcId) shared(counts) shared(radius)
+    for (size_t i = 0; i < nDst; i++) {
+        for (size_t j = 0; j < nSrc; j++) {
+            Flt dx = src[j].x - dst[i].x;
+            Flt dy = src[j].y - dst[i].y;
+
+            Flt distSquared = dx * dx + dy * dy;
+
+            if (distSquared < radius * radius) {
+                counts[i]++;
+                srcId[i].push_back(j);
+
+                // TODO add u from eq. 9
+                weights[i].push_back((sigma <= 0.) ? 1. : exp(-distSquared / (2. * sigma * sigma)));
+            }
+        }
+
+        for (size_t j = 0; j < counts[i]; j++) weights[i][j] /= counts[i];
+    }
+}
+
 /**
  * A projection class for connecting units on a source sheet to units on a destination sheet with topographically
  * aligned weighted connections from a radius of units on the source sheet to each destination sheet unit.
  */
 template<class Flt>
 class Projection {
+private:
+    HexGrid *hgSrc;
+    HexGrid *hgDst;
 public:
+    Flt radius;
     Flt strength;                   // strength of projection - multiplication after dot products
     Flt alpha;                      // learning rate
-    size_t nSrc;              // number of units on source sheet
-    size_t nDst;              // number of units on destination sheet
+    Flt sigma;
+    bool normaliseAlphas;
+
+    vector<Flt> *Xsrc;  // activations of source sheet
 
     vector<size_t> counts;                // number of connections in connection field for each unit
-    vector<Flt> norms;                // 1./counts
     vector<Flt> alphas;                // learning rates for each unit may depend on e.g., the number of connections
     vector<vector<size_t> > srcId;            // identity of connected units on the source sheet
     vector<vector<Flt> > weights;        // connection weights
-    vector<vector<Flt> > distances;        // pre-compute distances between units in source and destination sheets
-    vector<Flt *> fSrc;                // pointers to the field elements on the source sheet
-    vector<Flt *> fDst;                // pointers to the field elements on the destination sheet
-    vector<double> weightPlot;            // for constructing activity plots
 
     /**
      * Initialise the class with random weights (if sigma>0, the weights have a Gaussian pattern, else uniform random)
      *
      * @param radius radius within which connections are made
-     * @param normalizeAlphas whether to normalize learning rate by individual unit connection density
+     * @param normaliseAlphas whether to normalise learning rate by individual unit connection density
      */
-    Projection(vector<Flt *> fSrc, vector<Flt *> fDst, HexGrid *hgSrc, HexGrid *hgDst, Flt radius, Flt strength,
-               Flt alpha, Flt sigma, bool normalizeAlphas) {
-        this->fSrc = fSrc;
-        this->fDst = fDst;
+    Projection(vector<Flt>* Xsrc, HexGrid *hgSrc, HexGrid *hgDst, Flt radius, Flt strength, Flt alpha, Flt sigma, bool normaliseAlphas) {
+        this->Xsrc = Xsrc;
+        this->hgSrc = hgSrc;
+        this->hgDst = hgDst;
+        this->radius = radius;
         this->strength = strength;
         this->alpha = alpha;
-
-        nDst = hgDst->vhexen.size();
-        nSrc = hgSrc->vhexen.size();
-
-        counts.resize(nDst);
-        norms.resize(nDst);
-        srcId.resize(nDst);
-        weights.resize(nDst);
-        alphas.resize(nDst);
-        distances.resize(nDst);
-        weightPlot.resize(nSrc);
-
-        Flt radiusSquared = radius * radius;    // precompute for speed
-
-        double OverTwoSigmaSquared = 1. / (sigma * sigma * 2.0);    // precompute normalisation constant
-
-        // initialize connections for each destination sheet unit
-#pragma omp parallel for
-        for (size_t i = 0; i < nDst; i++) {
-            for (size_t j = 0; j < nSrc; j++) {
-                Flt dx = (hgSrc->vhexen[j]->x - hgDst->vhexen[i]->x);
-                Flt dy = (hgSrc->vhexen[j]->y - hgDst->vhexen[i]->y);
-                Flt distSquared = dx * dx + dy * dy;
-                if (distSquared < radiusSquared) {
-                    counts[i]++;
-                    srcId[i].push_back(j);
-                    Flt w = 1.0;
-                    if (sigma > 0.) {
-                        w = exp(-distSquared * OverTwoSigmaSquared);
-                    }
-                    weights[i].push_back(w);
-                    distances[i].push_back(sqrt(distSquared));
-                }
-            }
-            norms[i] = 1.0 / (Flt) counts[i];
-            alphas[i] = alpha;
-            if (normalizeAlphas) {
-                alphas[i] *= norms[i];
-            }
-        }
+        this->sigma = sigma;
+        this->normaliseAlphas = normaliseAlphas;
     }
 
-    /**
-     * Hebbian adaptation of the weights
-     *
-     * Requires calling RD_Sheet.renormalize() afterwards to constrain the weights using divisive postsynaptic weight
-     * normalisation.
-     *
-     * From paper: "This rule results in connections that reflect correlations between the presynaptic ON/OFF unit
-     * activities and the postsynaptic V1 response."
-     *
-     * Implements the numerator of eq. 10
-     */
-    void learn() {
-        if (alpha > 0.0) {
-#pragma omp parallel for default(none)
-            for (size_t i = 0; i < nDst; i++)
-                for (size_t j = 0; j < counts[i]; j++)
-                    weights[i][j] += *fSrc[srcId[i][j]] * *fDst[i] * alphas[i];
-        }
+    void initialise() {
+        initialiseConnections(squaresFromHexGrid(hgSrc), squaresFromHexGrid(hgDst), radius, sigma, counts, srcId, weights);
+
+        auto nDst = hgDst->vhexen.size();
+        alphas.resize(nDst);
+#pragma omp parallel for default(none) shared(nDst)
+        for (size_t i = 0; i < nDst; i++)
+            alphas[i] = !normaliseAlphas ? alpha : alpha / counts[i];
     }
 
     vector<Flt> getWeights() {
         vector<Flt> weightStore;
-        for (size_t i = 0; i < nDst; i++) {
+        for (size_t i = 0; i < weights.size(); i++) {
             for (size_t j = 0; j < counts[i]; j++) {
                 weightStore.push_back(weights[i][j]);
             }
@@ -136,7 +154,7 @@ public:
 
     void setWeights(vector<Flt> weightStore) {
         int k = 0;
-        for (size_t i = 0; i < nDst; i++) {
+        for (size_t i = 0; i < weights.size(); i++) {
             for (size_t j = 0; j < counts[i]; j++) {
                 weights[i][j] = weightStore[k];
                 k++;
@@ -144,27 +162,9 @@ public:
         }
     }
 
-    void renormalize() {
-#pragma omp parallel for
-        for (size_t i = 0; i < nDst; i++) {
-            Flt sumWeights = 0.0;
-            for (size_t j = 0; j < counts[i]; j++) {
-                sumWeights += weights[i][j];
-            }
-            for (size_t j = 0; j < counts[i]; j++) {
-                weights[i][j] /= sumWeights;
-            }
-        }
-    }
-
-    void multiplyWeights(int i, double scale) {
-#pragma omp parallel for
-        for (size_t j = 0; j < counts[i]; j++) {
-            weights[i][j] *= scale;
-        }
-    }
-
     vector<double> getWeightPlot(int i) {
+        vector<double> weightPlot;
+        weightPlot.resize(hgSrc->vhexen.size());
 #pragma omp parallel for
         for (size_t j = 0; j < weightPlot.size(); j++) {
             weightPlot[j] = 0.;
@@ -179,87 +179,67 @@ public:
 
 template<class Flt>
 class RD_Sheet : public morph::RD_Base<Flt> {
-protected:
-    vector<Flt> fields;                // current activity patterns
 public:
     vector<Projection<Flt>> Projections;
+
+    vector<Flt> fields;                // current activity patterns
+
+    // Thresholds
+    alignas(alignof(vector<Flt>)) vector<Flt> theta;
+
     alignas(alignof(vector<Flt>)) vector<Flt> X;
-    alignas(alignof(vector<Flt *>)) vector<Flt *> Xptr;
-    vector<vector<int>> P;            // identity of projections to (potentially) joint normalize
 
     virtual void init() {
-        this->stepCount = 0;
         this->zero_vector_variable(this->X);
+        morph::RD_Base<Flt>::allocate();
+        this->resize_vector_variable(this->X);
+        this->resize_vector_variable(this->theta);
+        this->zero_vector_variable(this->theta);
     }
 
     virtual void allocate() {
-        morph::RD_Base<Flt>::allocate();
-        this->resize_vector_variable(this->X);
-        for (size_t hi = 0; hi < this->nhex; ++hi) {
-            Xptr.push_back(&this->X[hi]);
-        }
-    }
-
-    void addProjection(vector<Flt *> inXptr, HexGrid *hgSrc, float radius, float strength, float alpha, float sigma,
-                       bool normalizeAlphas) {
-        Projections.push_back(
-                Projection<Flt>(inXptr, this->Xptr, hgSrc, this->hg, radius, strength, alpha, sigma, normalizeAlphas));
         this->fields.resize(Projections.size() * this->nhex, 0.0);
+        for (auto &p: Projections) p.initialise();
     }
 
-    void zero_X() {
-#pragma omp parallel for
-        for (size_t hi = 0; hi < this->nhex; ++hi) {
-            this->X[hi] = 0.;
-        }
+    /**
+     * @param sheet  source sheet
+     */
+    void addProjection(RD_Sheet<Flt> &sheet, float radius, float strength, float alpha, float sigma, bool normaliseAlphas) {
+        Projections.push_back(Projection<Flt>(&sheet.X, sheet.hg, this->hg, radius, strength, alpha, sigma, normaliseAlphas));
     }
 
-    void setNormalize(vector<int> proj) {
-        for (int &p : proj) {
-            for (size_t i = 0; i < this->P.size(); i++) {
-                for (size_t j = 0; j < this->P[i].size(); j++) {
-                    if (p == this->P[i][j]) {
-                        cout << "Caution - projection may be mutiply joint normalized" << endl;
-                    }
-                }
-            }
-        }
-        this->P.push_back(proj);
-    }
-
-    void renormalize() {
-        for (auto &projections: this->P) {
-#pragma omp parallel for default(none) shared(projections)
-            for (size_t i = 0; i < this->nhex; i++) {
-                Flt sumWeights = 0.0;
-
-                for (auto projectionId: projections) {
-                    auto &p = this->Projections[projectionId];
-                    for (size_t j = 0; j < p.counts[i]; j++)
-                        sumWeights += p.weights[i][j];
-                }
-
-                for (auto projectionId: projections) {
-                    auto &p = this->Projections[projectionId];
-                    for (size_t j = 0; j < p.counts[i]; j++)
-                        p.weights[i][j] /= sumWeights;
-                }
-            }
-        }
-    }
+    virtual void step() {}
 };
 
-/**
- * Assumes that assert(X.size() == nhex)
- */
 template<class Flt>
-void sheetStep(
-        size_t nhex,
-        const vector<Projection<Flt>>& projections,
-        const vector<Flt>& xOffsets,
-        vector<Flt>& fields,
-        vector<Flt>& X
-) {
+inline void zero_X(RD_Sheet<Flt>& sheet) {
+#pragma omp parallel for default(none) shared(sheet)
+    for (size_t hi = 0; hi < sheet.nhex; ++hi) sheet.X[hi] = 0.;
+}
+
+template<class Flt>
+void renormalise(RD_Sheet<Flt>& sheet, const vector<size_t>& projections) {
+#pragma omp parallel for default(none) shared(projections) shared(sheet)
+    for (size_t i = 0; i < sheet.nhex; i++) {
+        Flt sumWeights = 0.0;
+
+        for (auto projectionId: projections) {
+            auto &p = sheet.Projections[projectionId];
+            for (size_t j = 0; j < p.counts[i]; j++)
+                sumWeights += p.weights[i][j];
+        }
+
+        for (auto projectionId: projections) {
+            auto &p = sheet.Projections[projectionId];
+            for (size_t j = 0; j < p.counts[i]; j++)
+                p.weights[i][j] /= sumWeights;
+        }
+    }
+}
+
+template<class Flt>
+void sheetStep(RD_Sheet<Flt>& sheet, const vector<Projection<Flt>>& projections) {
     // Calculate activity patterns
     for (size_t pi = 0; pi < projections.size(); pi++) {
         auto& p = projections[pi];
@@ -267,49 +247,79 @@ void sheetStep(
         /* Dot product of each weight vector with the corresponding source sheet field values, multiplied by the
          * strength of the projection
          */
-#pragma omp parallel for default(none) shared(nhex) shared(fields) shared(p) shared(pi)
-        for (size_t hi = 0; hi < nhex; hi++) {
+#pragma omp parallel for default(none) shared(sheet) shared(p) shared(pi)
+        for (size_t hi = 0; hi < sheet.nhex; hi++) {
             auto field = 0.;
             for (size_t hj = 0; hj < p.counts[hi]; hj++)
-                field += *p.fSrc[p.srcId[hi][hj]] * p.weights[hi][hj];
+                field += (*p.Xsrc)[p.srcId[hi][hj]] * p.weights[hi][hj];
             field *= p.strength;
 
-            fields[pi * nhex + hi] = field;
+            sheet.fields[pi * sheet.nhex + hi] = field;
         }
     }
 
-    // This must not be performed before calculating the activity patterns because `fSrc` could contain self connections
+    // This must not be performed before calculating the activity patterns because `Xsrc` could contain self connections
     // as in the case of the cortical sheet.
-#pragma omp parallel for default(none) shared(nhex) shared(X)
-    for (size_t hi = 0; hi < nhex; ++hi) X[hi] = 0.;
+#pragma omp parallel for default(none) shared(sheet)
+    for (size_t hi = 0; hi < sheet.nhex; ++hi) sheet.X[hi] = 0.;
 
     for (size_t pi = 0; pi < projections.size(); pi++) {
-#pragma omp parallel for default(none) shared(nhex) shared(X) shared(fields) shared(pi)
-        for (size_t hi = 0; hi < nhex; ++hi) {
-            X[hi] += fields[pi * nhex + hi];
-        }
+#pragma omp parallel for default(none) shared(sheet) shared(pi)
+        for (size_t hi = 0; hi < sheet.nhex; ++hi)
+            sheet.X[hi] += sheet.fields[pi * sheet.nhex + hi];
     }
 
-#pragma omp parallel for default(none) shared(nhex) shared(X) shared(xOffsets)
-    for (size_t hi = 0; hi < nhex; ++hi)
-        X[hi] = fmax(X[hi] - xOffsets[hi], 0.);
+#pragma omp parallel for default(none) shared(sheet)
+    for (size_t hi = 0; hi < sheet.nhex; ++hi)
+        sheet.X[hi] = fmax(sheet.X[hi] - sheet.theta[hi], 0.);
 }
 
 template<class Flt>
-class LGN : public RD_Sheet<Flt> {
-private:
-    alignas(alignof(vector<Flt>)) vector<Flt> zeros;
-public:
-    virtual void allocate() {
-        RD_Sheet<Flt>::allocate();
-        this->resize_vector_variable(this->zeros);
-        this->zero_vector_variable(this->zeros);
+inline void sheetStep(RD_Sheet<Flt>& sheet) {
+    sheetStep(sheet, sheet.Projections);
+}
+
+inline double hebbian(
+        const Projection<double> &p,
+        const vector<double>& Xsrc,
+        const vector<double>& Xdst,
+        const size_t i,
+        const size_t j
+) {
+    auto omega_ij_p = p.weights[i][j];
+    auto alpha_p = p.alphas[i];
+    auto eta_i = Xsrc[p.srcId[i][j]];
+    auto eta_j = Xdst[i];
+
+    return omega_ij_p + alpha_p * eta_j * eta_i;
+}
+
+/**
+ * Hebbian weight adaptation
+ *
+ * Updates weights of supplied projections, constraining them using divisive postsynaptic weight normalisation.
+ *
+ * From paper: "This rule results in connections that reflect correlations between the presynaptic ON/OFF unit
+ * activities and the postsynaptic V1 response."
+ *
+ * Implements eq. 10
+ *
+ * @param projections Subset of projections. In the case of V1, this allows excluding self connections.
+ */
+void learn(RD_Sheet<double>& sheet, const vector<size_t> projections) {
+    for (auto projectionId: projections) {
+        auto &p = sheet.Projections[projectionId];
+
+#pragma omp parallel for default(none) shared(p) shared(sheet)
+        for (size_t i = 0; i < sheet.nhex; i++)
+            for (size_t j = 0; j < p.counts[i]; j++)
+                if (p.alphas[i] > 0.0) p.weights[i][j] = hebbian(p, *p.Xsrc, sheet.X, i, j);
     }
-    virtual void step() {
-        this->stepCount++;
-        sheetStep(this->nhex, this->Projections, this->zeros, this->fields, this->X);
-    }
-};
+
+    // From paper: "All afferent connection weights from RGC/LGN sheets are normalized together in the model, which
+    // allows V1 neurons to become selective for any subset of the RGC/LGN inputs."
+    renormalise(sheet, projections);
+}
 
 template<class Flt>
 struct HomeostasisParameters {
@@ -333,35 +343,21 @@ private:
 
     // Smoothed average activities
     alignas(alignof(vector<Flt>)) vector<Flt> Xavg;
-
-    // Thresholds
-    alignas(alignof(vector<Flt>)) vector<Flt> Theta;
 public:
     virtual void init(const HomeostasisParameters<Flt> params) {
         RD_Sheet<Flt>::init();
         this->params = params;
         this->zero_vector_variable(this->Xavg);
-        this->zero_vector_variable(this->Theta);
     }
 
     virtual void allocate() {
         RD_Sheet<Flt>::allocate();
         this->resize_vector_variable(this->Xavg);
-        this->resize_vector_variable(this->Theta);
+        this->resize_vector_variable(this->theta);
         for (size_t hi = 0; hi < this->nhex; ++hi) {
             this->Xavg[hi] = params.mu;
-            this->Theta[hi] = params.thetaInit;
+            this->theta[hi] = params.thetaInit;
         }
-    }
-
-    virtual void step() {
-        this->stepCount++;
-        sheetStep(this->nhex, this->Projections, this->Theta, this->fields, this->X);
-    }
-
-    virtual void step(const vector<Projection<Flt>>& projections) {
-        this->stepCount++;
-        sheetStep(this->nhex, projections, this->Theta, this->fields, this->X);
     }
 
     /**
@@ -377,7 +373,7 @@ public:
             Xavg[hi] = (1. - params.beta) * this->X[hi] + params.beta * Xavg[hi];
 
             // Update thresholds as per eq. 8
-            Theta[hi] = Theta[hi] + params.lambda * (Xavg[hi] - params.mu);
+            this->theta[hi] += params.lambda * (Xavg[hi] - params.mu);
         }
     }
 };
@@ -385,10 +381,6 @@ public:
 template<class Flt>
 class PatternGenerator_Sheet : public RD_Sheet<Flt> {
 public:
-    virtual void step() {
-        this->stepCount++;
-    }
-
     void Gaussian(double x_center, double y_center, double theta, double sigmaA, double sigmaB) {
         double cosTheta = cos(theta);
         double sinTheta = sin(theta);
@@ -434,19 +426,6 @@ vector<double> getPolyPixelVals(Mat frame, vector<Point> pp) {
     return polyPixelVals;
 }
 
-
-class Square {
-public:
-    double x, y;
-    double X;
-
-    Square(double x, double y) {
-        this->x = x;
-        this->y = y;
-        X = 0.;
-    }
-};
-
 class CartGrid {
 public:
     int n, nx, ny;
@@ -477,52 +456,19 @@ class HexCartSampler : public RD_Sheet<Flt> {
 public:
     CartGrid C;
     VideoCapture cap;
-    vector<vector<size_t> > srcId;
-    vector<vector<Flt> > weights;
-    vector<vector<Flt> > distances;
+    vector<vector<size_t>> srcId;
+    vector<vector<Flt>> weights;
     vector<size_t> counts;
-    vector<Flt> norms;
     Flt strength;
     vector<Point> mask;
     size_t stepsize;
 
-    vector<vector<double> > PreLoadedPatterns;
+    vector<vector<double>> PreLoadedPatterns;
 
     void initProjection(int nx, int ny, Flt radius, Flt sigma) {
+        this->strength = 1.;
         C.init(nx, ny);
-
-        this->strength = 1.0;
-        srcId.resize(this->nhex);
-        counts.resize(this->nhex);
-        weights.resize(this->nhex);
-        distances.resize(this->nhex);
-        norms.resize(this->nhex);
-
-        Flt radiusSquared = radius * radius;    // precompute for speed
-        Flt OverTwoSigmaSquared = 1. / (2.0 * sigma * sigma);
-#pragma omp parallel for
-        for (size_t i = 0; i < this->nhex; i++) {
-            for (int j = 0; j < C.n; j++) {
-                Flt dx = (this->hg->vhexen[i]->x - C.vsquare[j].x);
-                Flt dy = (this->hg->vhexen[i]->y - C.vsquare[j].y);
-                Flt distSquared = dx * dx + dy * dy;
-                if (distSquared < radiusSquared) {
-                    counts[i]++;
-                    srcId[i].push_back(j);
-                    Flt w = 1.0;
-                    if (sigma > 0.) {
-                        w = exp(-distSquared * OverTwoSigmaSquared);
-                    }
-                    weights[i].push_back(w);
-                    distances[i].push_back(sqrt(distSquared));
-                }
-            }
-            norms[i] = 1.0 / (Flt) counts[i];
-            for (size_t j = 0; j < counts[i]; j++) {
-                weights[i][j] *= norms[i];
-            }
-        }
-
+        initialiseConnections(C.vsquare, squaresFromHexGrid(this->hg), radius, sigma, counts, srcId, weights);
     }
 
     int initCamera(int xoff, int yoff, int stepsize) {
@@ -536,7 +482,7 @@ public:
     }
 
     virtual void step() {
-        this->zero_X();
+        zero_X(*this);
 #pragma omp parallel for
         for (size_t i = 0; i < this->nhex; i++) {
             for (size_t j = 0; j < counts[i]; j++) {
