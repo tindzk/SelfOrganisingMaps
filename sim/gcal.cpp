@@ -182,8 +182,10 @@ public:
     void plotAfferent(morph::Gdisplay dispIn, morph::Gdisplay dispLgn) {
         vector<double> fx(3, 0.);
         RD_Plot<double> plt(fx, fx, fx);
+
         auto a = activations(IN);
         plt.scalarfields(dispIn, hgIn, a, 0., 1.0);
+
         vector<vector<double>> L = { activations(LGN_ON), activations(LGN_OFF) };
         plt.scalarfields(dispLgn, hgLgnOn, L);
     }
