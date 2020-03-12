@@ -105,8 +105,8 @@ public:
         hgLgnOn = createHexGrid(root.get("LGN_svgpath", "boundaries/trialmod.svg").asString());
         LGN_ON.init(hgLgnOn->num());
         LGN_ON.connect({
-            Projection<double>(IN.X, squaresFromHexGrid(hgIn), squaresFromHexGrid(hgLgnOn), afferRadius, +LGNstrength, 0.0, LGNCenterSigma, false),
-            Projection<double>(IN.X, squaresFromHexGrid(hgIn), squaresFromHexGrid(hgLgnOn), afferRadius, -LGNstrength, 0.0, LGNSurroundSigma, false)
+            Projection<double>(IN.X, createConnections<double>(squaresFromHexGrid(hgIn), squaresFromHexGrid(hgLgnOn), afferRadius, LGNCenterSigma), +LGNstrength, 0.0, false),
+            Projection<double>(IN.X, createConnections<double>(squaresFromHexGrid(hgIn), squaresFromHexGrid(hgLgnOn), afferRadius, LGNSurroundSigma), -LGNstrength, 0.0, false)
         });
 
         renormalise(LGN_ON, {0});
@@ -116,8 +116,8 @@ public:
         hgLgnOff = createHexGrid(root.get("IN_svgpath", "boundaries/trialmod.svg").asString());
         LGN_OFF.init(hgLgnOff->num());
         LGN_OFF.connect({
-            Projection<double>(IN.X, squaresFromHexGrid(hgIn), squaresFromHexGrid(hgLgnOff), afferRadius, -LGNstrength, 0.0, LGNCenterSigma, false),
-            Projection<double>(IN.X, squaresFromHexGrid(hgIn), squaresFromHexGrid(hgLgnOff), afferRadius, +LGNstrength, 0.0, LGNSurroundSigma, false)
+            Projection<double>(IN.X, createConnections<double>(squaresFromHexGrid(hgIn), squaresFromHexGrid(hgLgnOff), afferRadius, LGNCenterSigma), -LGNstrength, 0.0, false),
+            Projection<double>(IN.X, createConnections<double>(squaresFromHexGrid(hgIn), squaresFromHexGrid(hgLgnOff), afferRadius, LGNSurroundSigma), +LGNstrength, 0.0, false)
         });
 
         renormalise(LGN_OFF, {0});
@@ -128,11 +128,11 @@ public:
         CX.init(hgCx->num(), {.beta = beta, .mu = mu, .lambda = lambda, .thetaInit = thetaInit});
         CX.connect({
             // afferent projection from ON/OFF cells
-            Projection<double>(LGN_ON.X, squaresFromHexGrid(hgLgnOn), squaresFromHexGrid(hgCx), afferRadius, afferStrength * 0.5, afferAlpha, afferSigma, true),
-            Projection<double>(LGN_OFF.X, squaresFromHexGrid(hgLgnOff), squaresFromHexGrid(hgCx), afferRadius, afferStrength * 0.5, afferAlpha, afferSigma, true),
+            Projection<double>(LGN_ON.X, createConnections<double>(squaresFromHexGrid(hgLgnOn), squaresFromHexGrid(hgCx), afferRadius, afferSigma), afferStrength * 0.5, afferAlpha, true),
+            Projection<double>(LGN_OFF.X, createConnections<double>(squaresFromHexGrid(hgLgnOff), squaresFromHexGrid(hgCx), afferRadius, afferSigma), afferStrength * 0.5, afferAlpha, true),
             // recurrent lateral excitatory/inhibitory projection from other V1 cells
-            Projection<double>(CX.X, squaresFromHexGrid(hgCx), squaresFromHexGrid(hgCx), excitRadius, excitStrength, excitAlpha, excitSigma, true),
-            Projection<double>(CX.X, squaresFromHexGrid(hgCx), squaresFromHexGrid(hgCx), inhibRadius, inhibStrength, inhibAlpha, inhibSigma, true)
+            Projection<double>(CX.X, createConnections<double>(squaresFromHexGrid(hgCx), squaresFromHexGrid(hgCx), excitRadius, excitSigma), excitStrength, excitAlpha, true),
+            Projection<double>(CX.X, createConnections<double>(squaresFromHexGrid(hgCx), squaresFromHexGrid(hgCx), inhibRadius, inhibSigma), inhibStrength, inhibAlpha, true)
         });
 
         renormalise(CX, {0 /* LGN ON */, 1 /* LGN OFF */});
