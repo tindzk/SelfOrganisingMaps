@@ -56,14 +56,14 @@ vector<Square> squaresFromHexGrid(const HexGrid* hexGrid) {
 template<class Flt>
 struct Connections {
     // identity of connected units on the source sheet
-    vector<vector<size_t>> srcId;
+    size_t* srcId;
 
     // connection weights [nDst, nSrc]
     // all unused weights are 0
     Flt* weights;
 
     // number of connections in connection field for each unit
-    vector<size_t> counts;
+    size_t* counts;
 
     size_t nSrc;
     size_t nDst;
@@ -90,8 +90,8 @@ Connections<Flt> createConnections(
 
     result.nSrc = src.size();
     result.nDst = dst.size();
-    result.counts.resize(result.nDst);
-    result.srcId.resize(result.nDst);
+    result.counts = createVector<size_t>(result.nDst);
+    result.srcId = createVector<size_t>(result.nDst * result.nSrc);
     result.weights = createVector<Flt>(result.nDst * result.nSrc);
 
 #pragma omp parallel for default(none) shared(sigma) shared(result) shared(src) shared(dst) shared(radius)
@@ -103,12 +103,10 @@ Connections<Flt> createConnections(
             Flt distSquared = dx * dx + dy * dy;
 
             if (distSquared < radius * radius) {
-                result.srcId[i].push_back(j);
-
                 // TODO add u from eq. 9
                 result.weights[i * result.nSrc + result.counts[i]] =
                         (sigma <= 0.) ? 1. : exp(-distSquared / (2. * sigma * sigma));
-
+                result.srcId[i * result.nSrc + result.counts[i]] = j;
                 result.counts[i]++;
             }
         }
@@ -182,7 +180,8 @@ public:
         }
 #pragma omp parallel for
         for (size_t j = 0; j < connections.counts[i]; j++) {
-            weightPlot[connections.srcId[i][j]] = connections.weights[i * connections.nSrc + j];
+            weightPlot[connections.srcId[i * connections.nSrc + j]] =
+                    connections.weights[i * connections.nSrc + j];
         }
         return weightPlot;
     }
@@ -290,7 +289,8 @@ void sheetStep(RD_Sheet<Flt>& sheet, const vector<Projection<Flt>>& projections)
         for (size_t hi = 0; hi < sheet.nhex; hi++) {
             auto field = 0.;
             for (size_t hj = 0; hj < p.connections.counts[hi]; hj++)
-                field += p.Xsrc[p.connections.srcId[hi][hj]] * p.connections.weights[hi * p.connections.nSrc + hj];
+                field += p.Xsrc[p.connections.srcId[hi * p.connections.nSrc + hj]] *
+                        p.connections.weights[hi * p.connections.nSrc + hj];
             field *= p.strength;
 
             sheet.fields[pi * sheet.nhex + hi] = field;
@@ -328,7 +328,7 @@ inline double hebbian(
 ) {
     auto omega_ij_p = p.connections.weights[i * p.connections.nSrc + j];
     auto alpha_p = p.alphas[i];
-    auto eta_i = Xsrc[p.connections.srcId[i][j]];
+    auto eta_i = Xsrc[p.connections.srcId[i * p.connections.nSrc + j]];
     auto eta_j = Xdst[i];
 
     return omega_ij_p + alpha_p * eta_j * eta_i;
@@ -523,7 +523,8 @@ public:
 #pragma omp parallel for
         for (size_t i = 0; i < connections.nDst; i++) {
             for (size_t j = 0; j < connections.counts[i]; j++) {
-                this->X[i] += C.vsquare[connections.srcId[i][j]].X * connections.weights[i * connections.nSrc + j];
+                this->X[i] += C.vsquare[connections.srcId[i * connections.nSrc + j]].X *
+                        connections.weights[i * connections.nSrc + j];
             }
             this->X[i] *= strength;
         }
