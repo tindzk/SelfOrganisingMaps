@@ -96,6 +96,8 @@ ConnectionField<Flt> createConnectionField(
 
 #pragma omp parallel for default(none) shared(sigma) shared(result) shared(src) shared(dst) shared(radius)
     for (size_t i = 0; i < result.nDst; i++) {
+        float sum = 0.;
+
         for (size_t j = 0; j < result.nSrc; j++) {
             Flt dx = src[j].x - dst[i].x;
             Flt dy = src[j].y - dst[i].y;
@@ -106,12 +108,14 @@ ConnectionField<Flt> createConnectionField(
                 result.weights[i * result.nSrc + result.counts[i]] =
                         // TODO should be +distSquared?
                         (sigma <= 0.) ? 1. : exp(-distSquared / (2. * sigma * sigma));
+                sum += result.weights[i * result.nSrc + result.counts[i]];
                 result.srcId[i * result.nSrc + result.counts[i]] = j;
                 result.counts[i]++;
             }
         }
 
-        for (size_t j = 0; j < result.counts[i]; j++) result.weights[i * result.nSrc + j] /= result.counts[i];
+        // All weights to neuron i should sum up to 1.0
+        for (size_t j = 0; j < result.counts[i]; j++) result.weights[i * result.nSrc + j] /= sum;
     }
 
     return result;
