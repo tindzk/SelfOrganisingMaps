@@ -128,8 +128,8 @@ public:
         CX.init(hgCx->num(), {.beta = beta, .mu = mu, .lambda = lambda, .thetaInit = thetaInit});
         CX.connect({
             // afferent projection from ON/OFF cells
-            Projection<double>(LGN_ON.X, createConnections<double>(squaresFromHexGrid(hgLgnOn), squaresFromHexGrid(hgCx), afferRadius, afferSigma), afferStrength * 0.5, afferAlpha, true),
-            Projection<double>(LGN_OFF.X, createConnections<double>(squaresFromHexGrid(hgLgnOff), squaresFromHexGrid(hgCx), afferRadius, afferSigma), afferStrength * 0.5, afferAlpha, true),
+            Projection<double>(LGN_ON.X, createConnections<double>(squaresFromHexGrid(hgLgnOn), squaresFromHexGrid(hgCx), afferRadius, afferSigma), afferStrength, afferAlpha, true),
+            Projection<double>(LGN_OFF.X, createConnections<double>(squaresFromHexGrid(hgLgnOff), squaresFromHexGrid(hgCx), afferRadius, afferSigma), afferStrength, afferAlpha, true),
             // recurrent lateral excitatory/inhibitory projection from other V1 cells
             Projection<double>(CX.X, createConnections<double>(squaresFromHexGrid(hgCx), squaresFromHexGrid(hgCx), excitRadius, excitSigma), excitStrength, excitAlpha, true),
             Projection<double>(CX.X, createConnections<double>(squaresFromHexGrid(hgCx), squaresFromHexGrid(hgCx), inhibRadius, inhibSigma), inhibStrength, inhibAlpha, true)

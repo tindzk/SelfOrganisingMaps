@@ -328,11 +328,12 @@ inline double hebbian(
         const Flt* Xsrc,
         const Flt* Xdst,
         size_t i,
-        size_t j
+        size_t j,
+        float w
 ) {
     auto omega_ij_p = p.connections.weights[i * p.connections.nSrc + j];
     auto alpha_p = p.alphas[i];
-    auto eta_i = Xsrc[p.connections.srcId[i * p.connections.nSrc + j]];
+    auto eta_i = Xsrc[p.connections.srcId[i * p.connections.nSrc + j]] * w;
     auto eta_j = Xdst[i];
 
     return omega_ij_p + alpha_p * eta_j * eta_i;
@@ -354,11 +355,11 @@ void learn(RD_Sheet<double>& sheet, const vector<size_t> projections) {
     for (auto projectionId: projections) {
         auto &p = sheet.Projections[projectionId];
 
-#pragma omp parallel for default(none) shared(p) shared(sheet)
+//#pragma omp parallel for default(none) shared(p) shared(sheet)
         for (size_t i = 0; i < sheet.nhex; i++)
             for (size_t j = 0; j < p.connections.counts[i]; j++)
                 if (p.alphas[i] > 0.0) p.connections.weights[i * p.connections.nSrc + j] =
-                        hebbian(p, p.Xsrc, sheet.X, i, j);
+                        hebbian(p, p.Xsrc, sheet.X, i, j, 1. / projections.size());
     }
 
     // From paper: "All afferent connection weights from RGC/LGN sheets are normalized together in the model, which
