@@ -75,7 +75,7 @@ struct Connections {
  * Based on spatial distances between the source and target sheet, determine which units to connect. Then, calculate the
  * corresponding weights.
  *
- * Implements eq. 9
+ * Implements eq. 3, but only the first term since both terms are equivalent except for their signs.
  *
  * @param radius radius within which connections are made
  */
@@ -103,8 +103,8 @@ Connections<Flt> createConnections(
             Flt distSquared = dx * dx + dy * dy;
 
             if (distSquared < radius * radius) {
-                // TODO add u from eq. 9
                 result.weights[i * result.nSrc + result.counts[i]] =
+                        // TODO should be +distSquared?
                         (sigma <= 0.) ? 1. : exp(-distSquared / (2. * sigma * sigma));
                 result.srcId[i * result.nSrc + result.counts[i]] = j;
                 result.counts[i]++;
@@ -117,6 +117,39 @@ Connections<Flt> createConnections(
     return result;
 }
 
+/** Eqn. 4 */
+template<class Flt>
+Flt* createWeightsGainControl(
+        const vector<Square>& src,
+        const vector<Square>& dst,
+        Flt radius,
+        Flt sigma
+) {
+    auto weights = createVector<Flt>(dst.size() * src.size());
+
+#pragma omp parallel for default(none) shared(sigma) shared(weights) shared(src) shared(dst) shared(radius)
+    for (size_t i = 0; i < dst.size(); i++) {
+        size_t count = 0;
+
+        for (size_t j = 0; j < src.size(); j++) {
+            Flt dx = src[j].x - dst[i].x;
+            Flt dy = src[j].y - dst[i].y;
+
+            Flt distSquared = dx * dx + dy * dy;
+            if (distSquared < radius * radius) {
+                weights[i * src.size() + count] =
+                    // Note the minus sign before `distSquared`
+                    (sigma <= 0.) ? 1. : exp(-distSquared / (2. * sigma * sigma));
+                count++;
+            }
+        }
+
+        for (size_t j = 0; j < count; j++) weights[i * src.size() + j] /= count;
+    }
+
+    return weights;
+}
+
 /**
  * A projection class for connecting units on a source sheet to units on a destination sheet with topographically
  * aligned weighted connections from a radius of units on the source sheet to each destination sheet unit.
@@ -125,6 +158,8 @@ template<class Flt>
 class Projection {
 public:
     Flt strength;                  // strength of projection - multiplication after dot products
+    Flt k;
+    Flt gamma_S;
     Flt* Xsrc;                     // activations of source sheet
     vector<Flt> alphas;            // learning rates for each unit may depend on e.g., the number of connections
     Connections<Flt> connections;
@@ -133,17 +168,23 @@ public:
      * Initialise the class with random weights (if sigma>0, the weights have a Gaussian pattern, else uniform random)
      *
      * @param alpha           learning rate
+     * @param strength        multiplier for overall strength of connections
+     * @param gamma_S         strength of feedforward contrast-gain control
      * @param normaliseAlphas normalise learning rate by individual unit connection density
      */
     Projection(Flt* Xsrc,
                Connections<Flt> connections,
                Flt strength,
+               Flt k,
+               Flt gamma_S,
                Flt alpha,
                bool normaliseAlphas
               ) {
         this->Xsrc = Xsrc;
         this->connections = connections;
         this->strength = strength;
+        this->k = k;
+        this->gamma_S = gamma_S;
 
         alphas.resize(connections.nDst);
 #pragma omp parallel for default(none) shared(connections) shared(normaliseAlphas) shared(alpha)
@@ -276,29 +317,50 @@ void renormalise(RD_Sheet<Flt>& sheet, const vector<size_t>& projections) {
     }
 }
 
+/**
+ * Eqn. 2
+ *
+ * @param gainControlWeights For LGN only; obtained using createWeightsGainControl()
+ */
 template<class Flt>
-void sheetStep(RD_Sheet<Flt>& sheet, const vector<Projection<Flt>>& projections) {
+void sheetStep(RD_Sheet<Flt>& sheet, const vector<Projection<Flt>>& projections, Flt* gainControlWeights) {
     // Calculate activity patterns
     for (size_t pi = 0; pi < projections.size(); pi++) {
         auto& p = projections[pi];
 
-        /* Dot product of each weight vector with the corresponding source sheet field values, multiplied by the
-         * strength of the projection
-         */
-#pragma omp parallel for default(none) shared(sheet) shared(p) shared(pi)
+#pragma omp parallel for default(none) shared(sheet) shared(p) shared(pi) shared(gainControlWeights)
         for (size_t hi = 0; hi < sheet.nhex; hi++) {
-            auto field = 0.;
-            for (size_t hj = 0; hj < p.connections.counts[hi]; hj++)
-                field += p.Xsrc[p.connections.srcId[hi * p.connections.nSrc + hj]] *
-                        p.connections.weights[hi * p.connections.nSrc + hj];
-            field *= p.strength;
+            /* Dot product of each weight vector with the corresponding source sheet field values, multiplied by the
+             * strength of the projection
+             */
+            auto activation = 0.;
+            for (size_t hj = 0; hj < p.connections.counts[hi]; hj++) {
+                auto afferentConnection = p.Xsrc[p.connections.srcId[hi * p.connections.nSrc + hj]];
+                activation += afferentConnection * p.connections.weights[hi * p.connections.nSrc + hj];
+            }
+            activation *= p.strength;
 
-            sheet.fields[pi * sheet.nhex + hi] = field;
+            // normalisation term for contrast-gain control
+            auto normalisation = 1.;
+            if (gainControlWeights != NULL)  {
+                normalisation = 0.;
+                for (size_t hj = 0; hj < p.connections.counts[hi]; hj++)
+                    normalisation += sheet.X[hi] * gainControlWeights[hi * p.connections.nSrc + hj];
+                normalisation *= p.gamma_S;
+                normalisation += p.k;
+            }
+
+            sheet.fields[pi * sheet.nhex + hi] = activation / normalisation;
         }
     }
 
+    //
+    // Determine activation by summing up all projection fields
+    //
+
     // This must not be performed before calculating the activity patterns because `Xsrc` could contain self connections
     // as in the case of the cortical sheet.
+    // Also, constrast-gain control needs to access previous activity.
 #pragma omp parallel for default(none) shared(sheet)
     for (size_t hi = 0; hi < sheet.nhex; ++hi) sheet.X[hi] = 0.;
 
@@ -308,14 +370,15 @@ void sheetStep(RD_Sheet<Flt>& sheet, const vector<Projection<Flt>>& projections)
             sheet.X[hi] += sheet.fields[pi * sheet.nhex + hi];
     }
 
+    // Corresponds to `f` in eqn. 2: half-wave rectifying activation function such that sheet.X[hi] >= 0
 #pragma omp parallel for default(none) shared(sheet)
     for (size_t hi = 0; hi < sheet.nhex; ++hi)
         sheet.X[hi] = fmax(sheet.X[hi] - sheet.theta[hi], 0.);
 }
 
 template<class Flt>
-inline void sheetStep(RD_Sheet<Flt>& sheet) {
-    sheetStep(sheet, sheet.Projections);
+inline void sheetStep(RD_Sheet<Flt>& sheet, Flt* gainControlWeights) {
+    sheetStep(sheet, sheet.Projections, gainControlWeights);
 }
 
 template<class Flt>

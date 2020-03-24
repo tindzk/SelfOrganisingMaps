@@ -28,13 +28,14 @@ public:
     PatternGenerator_Sheet<double> IN;
     HexGrid* hgIn;
 
+    // HexGrid for LGN ON/OFF
+    HexGrid* hgLgn;
+
     // LGN ON cells
     RD_Sheet<double> LGN_ON;
-    HexGrid* hgLgnOn;
 
     // LGN OFF cells
     RD_Sheet<double> LGN_OFF;
-    HexGrid* hgLgnOff;
 
     CortexSOM<double> CX;
     HexGrid* hgCx;
@@ -47,7 +48,12 @@ public:
 
     float beta, lambda, mu, thetaInit, xRange, yRange, afferAlpha, excitAlpha, inhibAlpha;
     float afferStrength, excitStrength, inhibStrength, LGNstrength, scale;
+
+    float k, gamma_S, sigma_S;
+
     float sigmaA, sigmaB, afferRadius, excitRadius, inhibRadius, afferSigma, excitSigma, inhibSigma, LGNCenterSigma, LGNSurroundSigma;
+
+    double* gainControlWeights;
 
     void init(Json::Value root) {
         // Read parameters from JSON
@@ -70,10 +76,16 @@ public:
         inhibAlpha = root.get("inhibAlpha", 0.3).asFloat();
 
         // projection strengths
-        afferStrength = root.get("afferStrength", 1.5).asFloat();
-        excitStrength = root.get("excitStrength", 1.7).asFloat();
-        inhibStrength = root.get("inhibStrength", -1.4).asFloat();
-        LGNstrength = root.get("LGNstrength", 14.0).asFloat();
+        afferStrength = root.get("afferStrength", 1.5).asFloat();  // gamma_A
+        excitStrength = root.get("excitStrength", 1.7).asFloat();  // gamma_E
+        inhibStrength = root.get("inhibStrength", -1.4).asFloat(); // gamma_I
+        LGNstrength = root.get("LGNstrength", 14.0).asFloat();     // gamma_O
+
+        // contrast-gain control for ON/OFF cells
+        // parameters for spatial normalisation pooling S
+        k       = 0.11;  // constant offset such that output is well-defined for weak inputs
+        gamma_S = 0.6;   // strength of inhibitory gain control projection
+        sigma_S = 0.125; // size of spatial normalisation pooling
 
         // spatial params
         scale = root.get("scale", 0.5).asFloat();
@@ -101,23 +113,27 @@ public:
         hgIn = createHexGrid(root.get("IN_svgpath", "boundaries/trialmod.svg").asString());
         IN.init(hgIn->num());
 
+        hgLgn = createHexGrid(root.get("LGN_svgpath", "boundaries/trialmod.svg").asString());
+
+        // Gain control for LGN ON/OFF
+        gainControlWeights = createWeightsGainControl<double>(squaresFromHexGrid(hgIn), squaresFromHexGrid(hgLgn), afferRadius, sigma_S);
+
         // LGN ON cells
-        hgLgnOn = createHexGrid(root.get("LGN_svgpath", "boundaries/trialmod.svg").asString());
-        LGN_ON.init(hgLgnOn->num());
+        LGN_ON.init(hgLgn->num());
         LGN_ON.connect({
-            Projection<double>(IN.X, createConnections<double>(squaresFromHexGrid(hgIn), squaresFromHexGrid(hgLgnOn), afferRadius, LGNCenterSigma), +LGNstrength, 0.0, false),
-            Projection<double>(IN.X, createConnections<double>(squaresFromHexGrid(hgIn), squaresFromHexGrid(hgLgnOn), afferRadius, LGNSurroundSigma), -LGNstrength, 0.0, false)
+            Projection<double>(IN.X, createConnections<double>(squaresFromHexGrid(hgIn), squaresFromHexGrid(hgLgn), afferRadius, LGNCenterSigma), +LGNstrength, k, gamma_S, 0.0, false),
+            Projection<double>(IN.X, createConnections<double>(squaresFromHexGrid(hgIn), squaresFromHexGrid(hgLgn), afferRadius, LGNSurroundSigma), -LGNstrength, k, gamma_S, 0.0, false)
         });
 
         renormalise(LGN_ON, {0});
         renormalise(LGN_ON, {1});
 
         // LGN OFF cells
-        hgLgnOff = createHexGrid(root.get("IN_svgpath", "boundaries/trialmod.svg").asString());
-        LGN_OFF.init(hgLgnOff->num());
+        LGN_OFF.init(hgLgn->num());
         LGN_OFF.connect({
-            Projection<double>(IN.X, createConnections<double>(squaresFromHexGrid(hgIn), squaresFromHexGrid(hgLgnOff), afferRadius, LGNCenterSigma), -LGNstrength, 0.0, false),
-            Projection<double>(IN.X, createConnections<double>(squaresFromHexGrid(hgIn), squaresFromHexGrid(hgLgnOff), afferRadius, LGNSurroundSigma), +LGNstrength, 0.0, false)
+            // OFF weights are negation of ON weights, thus change signs of strength
+            Projection<double>(IN.X, createConnections<double>(squaresFromHexGrid(hgIn), squaresFromHexGrid(hgLgn), afferRadius, LGNCenterSigma), -LGNstrength, k, gamma_S, 0.0, false),
+            Projection<double>(IN.X, createConnections<double>(squaresFromHexGrid(hgIn), squaresFromHexGrid(hgLgn), afferRadius, LGNSurroundSigma), +LGNstrength, k, gamma_S, 0.0, false)
         });
 
         renormalise(LGN_OFF, {0});
@@ -126,13 +142,14 @@ public:
         // Cortex Sheet (V1)
         hgCx = createHexGrid(root.get("CX_svgpath", "boundaries/trialmod.svg").asString());
         CX.init(hgCx->num(), {.beta = beta, .mu = mu, .lambda = lambda, .thetaInit = thetaInit});
+        // k = 1, gamma_S = 0 because no contrast-gain control for V1
         CX.connect({
             // afferent projection from ON/OFF cells
-            Projection<double>(LGN_ON.X, createConnections<double>(squaresFromHexGrid(hgLgnOn), squaresFromHexGrid(hgCx), afferRadius, afferSigma), afferStrength * 0.5, afferAlpha, true),
-            Projection<double>(LGN_OFF.X, createConnections<double>(squaresFromHexGrid(hgLgnOff), squaresFromHexGrid(hgCx), afferRadius, afferSigma), afferStrength * 0.5, afferAlpha, true),
+            Projection<double>(LGN_ON.X, createConnections<double>(squaresFromHexGrid(hgLgn), squaresFromHexGrid(hgCx), afferRadius, afferSigma), afferStrength * 0.5, 1, 0, afferAlpha, true),
+            Projection<double>(LGN_OFF.X, createConnections<double>(squaresFromHexGrid(hgLgn), squaresFromHexGrid(hgCx), afferRadius, afferSigma), afferStrength * 0.5, 1, 0, afferAlpha, true),
             // recurrent lateral excitatory/inhibitory projection from other V1 cells
-            Projection<double>(CX.X, createConnections<double>(squaresFromHexGrid(hgCx), squaresFromHexGrid(hgCx), excitRadius, excitSigma), excitStrength, excitAlpha, true),
-            Projection<double>(CX.X, createConnections<double>(squaresFromHexGrid(hgCx), squaresFromHexGrid(hgCx), inhibRadius, inhibSigma), inhibStrength, inhibAlpha, true)
+            Projection<double>(CX.X, createConnections<double>(squaresFromHexGrid(hgCx), squaresFromHexGrid(hgCx), excitRadius, excitSigma), excitStrength, 1, 0, excitAlpha, true),
+            Projection<double>(CX.X, createConnections<double>(squaresFromHexGrid(hgCx), squaresFromHexGrid(hgCx), inhibRadius, inhibSigma), inhibStrength, 1, 0, inhibAlpha, true)
         });
 
         renormalise(CX, {0 /* LGN ON */, 1 /* LGN OFF */});
@@ -175,8 +192,8 @@ public:
                 copyActivations(HCM, IN);
             }
         }
-        sheetStep(LGN_ON);
-        sheetStep(LGN_OFF);
+        sheetStep(LGN_ON, gainControlWeights);
+        sheetStep(LGN_OFF, gainControlWeights);
     }
 
     void plotAfferent(morph::Gdisplay dispIn, morph::Gdisplay dispLgn) {
@@ -187,7 +204,7 @@ public:
         plt.scalarfields(dispIn, hgIn, a, 0., 1.0);
 
         vector<vector<double>> L = { activations(LGN_ON), activations(LGN_OFF) };
-        plt.scalarfields(dispLgn, hgLgnOn, L);
+        plt.scalarfields(dispLgn, hgLgn, L);
     }
 
     /**
@@ -201,7 +218,7 @@ public:
         // From paper: "Once all 16 settling steps are complete, the settled V1 activation pattern is deemed to be the
         // V1 response to the presented pattern."
         for (size_t j = 0; j < settle; j++) {
-            sheetStep(CX);
+            sheetStep(CX, (double*) NULL);
 
             auto a = activations(CX);
             f(hgCx, a);
@@ -269,10 +286,10 @@ public:
             for (size_t j = 0; j < nPhase; j++) {
                 double phase = j * phaseInc;
                 IN.Grating(hgIn, theta, phase, 30.0, 1.0);
-                sheetStep(LGN_ON);
-                sheetStep(LGN_OFF);
+                sheetStep(LGN_ON, gainControlWeights);
+                sheetStep(LGN_OFF, gainControlWeights);
                 zero_X(CX);  // Required because of CX's self connections
-                sheetStep(CX, afferent);
+                sheetStep(CX, afferent, (double*) NULL);
                 for (size_t k = 0; k < maxPhase.size(); k++) {
                     if (maxPhase[k] < CX.X[k]) maxPhase[k] = CX.X[k];
                 }
