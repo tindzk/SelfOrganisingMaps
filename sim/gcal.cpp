@@ -126,8 +126,8 @@ public:
         // LGN ON cells
         LGN_ON.init(hgLgn->num());
         LGN_ON.connect({
-            Projection<double>(IN.X, createConnectionField<double>(squaresIn, squaresLgn, afferRadius, LGNCenterSigma), +LGNstrength, k, gamma_S, 0.0, false),
-            Projection<double>(IN.X, createConnectionField<double>(squaresIn, squaresLgn, afferRadius, LGNSurroundSigma), -LGNstrength, k, gamma_S, 0.0, false)
+            Projection<double>(IN.X, createConnectionField<double>(squaresIn, squaresLgn, afferRadius, LGNCenterSigma, false), +LGNstrength, k, gamma_S, 0.0, false),
+            Projection<double>(IN.X, createConnectionField<double>(squaresIn, squaresLgn, afferRadius, LGNSurroundSigma, false), -LGNstrength, k, gamma_S, 0.0, false)
         });
 
         renormalise(LGN_ON, {0});
@@ -137,8 +137,8 @@ public:
         LGN_OFF.init(hgLgn->num());
         LGN_OFF.connect({
             // OFF weights are negation of ON weights, thus change signs of strength
-            Projection<double>(IN.X, createConnectionField<double>(squaresIn, squaresLgn, afferRadius, LGNCenterSigma), -LGNstrength, k, gamma_S, 0.0, false),
-            Projection<double>(IN.X, createConnectionField<double>(squaresIn, squaresLgn, afferRadius, LGNSurroundSigma), +LGNstrength, k, gamma_S, 0.0, false)
+            Projection<double>(IN.X, createConnectionField<double>(squaresIn, squaresLgn, afferRadius, LGNCenterSigma, false), -LGNstrength, k, gamma_S, 0.0, false),
+            Projection<double>(IN.X, createConnectionField<double>(squaresIn, squaresLgn, afferRadius, LGNSurroundSigma, false), +LGNstrength, k, gamma_S, 0.0, false)
         });
 
         renormalise(LGN_OFF, {0});
@@ -148,12 +148,12 @@ public:
         CX.init(hgCx->num(), {.beta = beta, .mu = mu, .lambda = lambda, .thetaInit = thetaInit});
         // k = 1, gamma_S = 0 because no contrast-gain control for V1
         CX.connect({
-            // afferent projection from ON/OFF cells
-            Projection<double>(LGN_ON.X, createConnectionField<double>(squaresLgn, squaresCx, afferRadius, afferSigma), afferStrength * 0.5, 1, 0, afferAlpha, true),
-            Projection<double>(LGN_OFF.X, createConnectionField<double>(squaresLgn, squaresCx, afferRadius, afferSigma), afferStrength * 0.5, 1, 0, afferAlpha, true),
-            // recurrent lateral excitatory/inhibitory projection from other V1 cells
-            Projection<double>(CX.X, createConnectionField<double>(squaresCx, squaresCx, excitRadius, excitSigma), excitStrength, 1, 0, excitAlpha, true),
-            Projection<double>(CX.X, createConnectionField<double>(squaresCx, squaresCx, inhibRadius, inhibSigma), inhibStrength, 1, 0, inhibAlpha, true)
+            // afferent projections from ON/OFF cells
+            Projection<double>(LGN_ON.X, createConnectionField<double>(squaresLgn, squaresCx, afferRadius, afferSigma, true), afferStrength * 0.5, 1, 0, afferAlpha, true),
+            Projection<double>(LGN_OFF.X, createConnectionField<double>(squaresLgn, squaresCx, afferRadius, afferSigma, true), afferStrength * 0.5, 1, 0, afferAlpha, true),
+            // recurrent lateral excitatory/inhibitory projections from other V1 cells
+            Projection<double>(CX.X, createConnectionField<double>(squaresCx, squaresCx, excitRadius, excitSigma, false), excitStrength, 1, 0, excitAlpha, true),
+            Projection<double>(CX.X, createConnectionField<double>(squaresCx, squaresCx, inhibRadius, inhibSigma, true), inhibStrength, 1, 0, inhibAlpha, true)
         });
 
         renormalise(CX, {0 /* LGN ON */, 1 /* LGN OFF */});

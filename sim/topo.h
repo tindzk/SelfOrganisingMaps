@@ -75,16 +75,18 @@ struct ConnectionField {
  * Based on spatial distances between the source and target sheet, determine which units to connect. Then, calculate the
  * corresponding weights.
  *
- * Implements eq. 3, but only the first term since both terms are equivalent except for their signs.
+ * Implements eq. 9. Same as first term in eq. 3 with u = 1.
  *
- * @param radius radius within which connections are made
+ * @param radius          radius within which connections are made
+ * @param randomStrength  if true, scalars will be drawn from a uniform random distribution
  */
 template<class Flt>
 ConnectionField<Flt> createConnectionField(
         const vector<Square>& src,
         const vector<Square>& dst,
         Flt radius,
-        Flt sigma
+        Flt sigma,
+        bool randomStrength
 ) {
     ConnectionField<Flt> result = ConnectionField<Flt>();
 
@@ -94,7 +96,7 @@ ConnectionField<Flt> createConnectionField(
     result.srcId = createVector<size_t>(result.nDst * result.nSrc);
     result.weights = createVector<Flt>(result.nDst * result.nSrc);
 
-#pragma omp parallel for default(none) shared(sigma) shared(result) shared(src) shared(dst) shared(radius)
+#pragma omp parallel for default(none) shared(sigma) shared(result) shared(src) shared(dst) shared(radius) shared(randomStrength)
     for (size_t i = 0; i < result.nDst; i++) {
         float sum = 0.;
 
@@ -103,11 +105,10 @@ ConnectionField<Flt> createConnectionField(
             Flt dy = src[j].y - dst[i].y;
 
             Flt distSquared = dx * dx + dy * dy;
-
             if (distSquared < radius * radius) {
+                float u = randomStrength ? rand() : 1.;
                 result.weights[i * result.nSrc + result.counts[i]] =
-                        // TODO should be +distSquared?
-                        (sigma <= 0.) ? 1. : exp(-distSquared / (2. * sigma * sigma));
+                        u * ((sigma <= 0.) ? 1. : exp(-distSquared / (2. * sigma * sigma)));
                 sum += result.weights[i * result.nSrc + result.counts[i]];
                 result.srcId[i * result.nSrc + result.counts[i]] = j;
                 result.counts[i]++;
@@ -121,7 +122,11 @@ ConnectionField<Flt> createConnectionField(
     return result;
 }
 
-/** Eqn. 4 */
+/**
+ * Eqn. 4
+ *
+ * Same as createConnectionField(src, dst, radius, sigma), but does not create vectors for counts and srcId.
+ */
 template<class Flt>
 Flt* createWeightsGainControl(
         const vector<Square>& src,
@@ -142,7 +147,6 @@ Flt* createWeightsGainControl(
             Flt distSquared = dx * dx + dy * dy;
             if (distSquared < radius * radius) {
                 weights[i * src.size() + count] =
-                    // Note the minus sign before `distSquared`
                     (sigma <= 0.) ? 1. : exp(-distSquared / (2. * sigma * sigma));
                 count++;
             }
@@ -572,7 +576,7 @@ public:
     void initProjection(HexGrid *hg, int nx, int ny, Flt radius, Flt sigma) {
         this->strength = 1.;
         C.init(nx, ny);
-        this->connections = createConnectionField(C.vsquare, squaresFromHexGrid(hg), radius, sigma);
+        this->connections = createConnectionField(C.vsquare, squaresFromHexGrid(hg), radius, sigma, false);
     }
 
     int initCamera(int xoff, int yoff, int stepsize) {
