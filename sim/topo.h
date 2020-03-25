@@ -54,7 +54,7 @@ vector<Square> squaresFromHexGrid(const HexGrid* hexGrid) {
 }
 
 template<class Flt>
-struct Connections {
+struct ConnectionField {
     // identity of connected units on the source sheet
     size_t* srcId;
 
@@ -80,13 +80,13 @@ struct Connections {
  * @param radius radius within which connections are made
  */
 template<class Flt>
-Connections<Flt> createConnections(
+ConnectionField<Flt> createConnectionField(
         const vector<Square>& src,
         const vector<Square>& dst,
         Flt radius,
         Flt sigma
 ) {
-    Connections<Flt> result = Connections<Flt>();
+    ConnectionField<Flt> result = ConnectionField<Flt>();
 
     result.nSrc = src.size();
     result.nDst = dst.size();
@@ -162,7 +162,7 @@ public:
     Flt gamma_S;
     Flt* Xsrc;                     // activations of source sheet
     vector<Flt> alphas;            // learning rates for each unit may depend on e.g., the number of connections
-    Connections<Flt> connections;
+    ConnectionField<Flt> connections;
 
     /**
      * Initialise the class with random weights (if sigma>0, the weights have a Gaussian pattern, else uniform random)
@@ -173,7 +173,7 @@ public:
      * @param normaliseAlphas normalise learning rate by individual unit connection density
      */
     Projection(Flt* Xsrc,
-               Connections<Flt> connections,
+               ConnectionField<Flt> connections,
                Flt strength,
                Flt k,
                Flt gamma_S,
@@ -563,12 +563,12 @@ public:
     vector<Point> mask;
     size_t stepsize;
     vector<vector<double>> PreLoadedPatterns;
-    Connections<Flt> connections;
+    ConnectionField<Flt> connections;
 
     void initProjection(HexGrid *hg, int nx, int ny, Flt radius, Flt sigma) {
         this->strength = 1.;
         C.init(nx, ny);
-        this->connections = createConnections(C.vsquare, squaresFromHexGrid(hg), radius, sigma);
+        this->connections = createConnectionField(C.vsquare, squaresFromHexGrid(hg), radius, sigma);
     }
 
     int initCamera(int xoff, int yoff, int stepsize) {
