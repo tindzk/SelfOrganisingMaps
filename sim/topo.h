@@ -98,7 +98,7 @@ ConnectionField<Flt> createConnectionField(
 
 #pragma omp parallel for default(none) shared(sigma) shared(result) shared(src) shared(dst) shared(radius) shared(randomStrength)
     for (size_t i = 0; i < result.nDst; i++) {
-        float sum = 0.;
+        Flt sum = 0.;
 
         for (size_t j = 0; j < result.nSrc; j++) {
             Flt dx = src[j].x - dst[i].x;
@@ -106,7 +106,7 @@ ConnectionField<Flt> createConnectionField(
 
             Flt distSquared = dx * dx + dy * dy;
             if (distSquared < radius * radius) {
-                float u = randomStrength ? rand() : 1.;
+                Flt u = randomStrength ? morph::Tools::randDouble() : 1.;
                 result.weights[i * result.nSrc + result.counts[i]] =
                         u * ((sigma <= 0.) ? 1. : exp(-distSquared / (2. * sigma * sigma)));
                 sum += result.weights[i * result.nSrc + result.counts[i]];
