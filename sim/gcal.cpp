@@ -51,15 +51,18 @@ public:
 
     bool homeostasis;
 
-    // Number of settling steps
-    size_t settle;
+    // Number of settling steps (LGN) if gain control is enabled, otherwise fixed to 1
+    size_t settleLgn;
+
+    // Number of settling steps (V1)
+    size_t settleV1;
 
     float beta, lambda, mu, thetaInit, xRange, yRange, afferAlpha, excitAlpha, inhibAlpha;
     float afferStrength, excitStrength, inhibStrength, LGNstrength, scale;
 
     float k, gamma_S, sigma_S;
 
-    float sigmaA, sigmaB, afferRadius, excitRadius, inhibRadius, afferSigma, excitSigma, inhibSigma, LGNCenterSigma, LGNSurroundSigma;
+    float sigmaA, sigmaB, afferRadius, lateralRadius, excitRadius, inhibRadius, afferSigma, excitSigma, inhibSigma, LGNCenterSigma, LGNSurroundSigma, LGNLateralSigma;
 
     double* gainControlWeights;
 
@@ -67,7 +70,6 @@ public:
 
     void init(Json::Value root) {
         // Read parameters from JSON
-        settle = root.get("settle", 16).asUInt();
 
         // homeostasis
         homeostasis = root.get("homeostasis", true).asBool();
@@ -97,7 +99,16 @@ public:
         gamma_S = 0.6;   // strength of inhibitory gain control projection
         sigma_S = 0.125; // size of spatial normalisation pooling
 
+        bool gainControl = k != 1;
+
+        // settling steps
+        settleLgn = root.get("settleLgn", 1).asUInt();
+        settleV1 = root.get("settleV1", 16).asUInt();
+
+        if (!gainControl) settleLgn = 1;
+
         // spatial params
+        // TODO scale is not described in paper
         scale = root.get("scale", 0.5).asFloat();
         sigmaA = root.get("sigmaA", 1.0).asFloat() * scale;
         sigmaB = root.get("sigmaB", 0.3).asFloat() * scale;
@@ -108,7 +119,11 @@ public:
         excitSigma = root.get("excitSigma", 0.025).asFloat() * scale;
         inhibSigma = root.get("inhibSigma", 0.075).asFloat() * scale;
         LGNCenterSigma = root.get("LGNCenterSigma", 0.037).asFloat() * scale;
-        LGNSurroundSigma = root.get("LGNSuroundSigma", 0.150).asFloat() * scale;
+        LGNSurroundSigma = root.get("LGNSurroundSigma", 0.150).asFloat() * scale;
+
+        // from http://ioam.github.io/topographica/_static/gcal.html
+        lateralRadius = root.get("lateralRadius", 0.25).asFloat() * scale;
+        LGNLateralSigma = root.get("LGNLateralSigma", 0.25).asFloat() * scale;
 
         // INITIALIZE LOGFILE
         string logpath = root.get("logpath", "logs/").asString();
@@ -135,24 +150,40 @@ public:
 
         // LGN ON cells
         LGN_ON.init(hgLgn->num());
-        LGN_ON.connect({
-            Projection<double>(IN.X, createConnectionField<double>(squaresIn, squaresLgn, afferRadius, LGNCenterSigma, false), +LGNstrength, k, gamma_S, 0.0, false),
-            Projection<double>(IN.X, createConnectionField<double>(squaresIn, squaresLgn, afferRadius, LGNSurroundSigma, false), -LGNstrength, k, gamma_S, 0.0, false)
-        });
+        vector<Projection<double>> projectionsLgnOn = {
+            // afferent projections (from retina)
+            Projection<double>(IN.X, createConnectionField<double>(squaresIn, squaresLgn, afferRadius, LGNCenterSigma, false), +LGNstrength, 1, 0., 0.0, false),
+            Projection<double>(IN.X, createConnectionField<double>(squaresIn, squaresLgn, afferRadius, LGNSurroundSigma, false), -LGNstrength, 1, 0., 0.0, false)
+        };
+        if (gainControl)
+            projectionsLgnOn.push_back(
+                    // recurrent lateral inhibitory projection
+                    Projection<double>(LGN_ON.X, createConnectionField<double>(squaresIn, squaresLgn, lateralRadius, LGNLateralSigma, false), -LGNstrength, k, gamma_S, 0.0, false)
+            );
+        LGN_ON.connect(projectionsLgnOn);
 
         renormalise(LGN_ON, {0});
         renormalise(LGN_ON, {1});
+        if (gainControl) renormalise(LGN_ON, {2 /* recurrent inhibitory projection */});
 
         // LGN OFF cells
         LGN_OFF.init(hgLgn->num());
-        LGN_OFF.connect({
+        vector<Projection<double>> projectionsLgnOff = {
+            // afferent projections (from retina)
             // OFF weights are negation of ON weights, thus change signs of strength
-            Projection<double>(IN.X, createConnectionField<double>(squaresIn, squaresLgn, afferRadius, LGNCenterSigma, false), -LGNstrength, k, gamma_S, 0.0, false),
-            Projection<double>(IN.X, createConnectionField<double>(squaresIn, squaresLgn, afferRadius, LGNSurroundSigma, false), +LGNstrength, k, gamma_S, 0.0, false)
-        });
+            Projection<double>(IN.X, createConnectionField<double>(squaresIn, squaresLgn, afferRadius, LGNCenterSigma, false), -LGNstrength, 1, 0., 0.0, false),
+            Projection<double>(IN.X, createConnectionField<double>(squaresIn, squaresLgn, afferRadius, LGNSurroundSigma, false), +LGNstrength, 1, 0., 0.0, false)
+        };
+        if (gainControl)
+            projectionsLgnOff.push_back(
+                    // recurrent lateral inhibitory projection
+                    Projection<double>(LGN_OFF.X, createConnectionField<double>(squaresIn, squaresLgn, lateralRadius, LGNLateralSigma, false), -LGNstrength, k, gamma_S, 0.0, false)
+            );
+        LGN_OFF.connect(projectionsLgnOff);
 
         renormalise(LGN_OFF, {0});
         renormalise(LGN_OFF, {1});
+        if (gainControl) renormalise(LGN_OFF, {2 /* recurrent inhibitory projection */});
 
         // Cortex Sheet (V1)
         CX.init(hgCx->num(), {.beta = beta, .mu = mu, .lambda = lambda, .thetaInit = thetaInit});
@@ -206,8 +237,11 @@ public:
                 copyActivations(HCM, IN);
             }
         }
-        sheetStep(LGN_ON, gainControlWeights);
-        sheetStep(LGN_OFF, gainControlWeights);
+
+        for (size_t j = 0; j < settleLgn; j++) {
+            sheetStep(LGN_ON, gainControlWeights);
+            sheetStep(LGN_OFF, gainControlWeights);
+        }
     }
 
     void plotAfferent(morph::Gdisplay dispIn, morph::Gdisplay dispLgn) {
@@ -231,7 +265,7 @@ public:
 
         // From paper: "Once all 16 settling steps are complete, the settled V1 activation pattern is deemed to be the
         // V1 response to the presented pattern."
-        for (size_t j = 0; j < settle; j++) {
+        for (size_t j = 0; j < settleV1; j++) {
             sheetStep(CX, (double*) NULL);
 
             auto a = activations(CX);
