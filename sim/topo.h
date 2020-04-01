@@ -507,14 +507,15 @@ public:
         }
     }
 
+    // TODO amplitude not used
     void Grating(HexGrid *hg, double theta, double phase, double width, double amplitude) {
-        double cosTheta = cos(theta);
-        double sinTheta = sin(theta);
-
-#pragma omp parallel for
+#pragma omp parallel for default(none) shared(hg) shared(width) shared(theta) shared(phase)
         for (size_t hi = 0; hi < this->nhex; ++hi) {
-            this->X[hi] = sin(
-                    width * (hg->vhexen[hi]->x * sinTheta + hg->vhexen[hi]->y * cosTheta + phase));
+            auto x = hg->vhexen[hi]->x;
+            auto y = hg->vhexen[hi]->y;
+
+            // TODO Where is this described?
+            this->X[hi] = sin(width * (x * sin(theta) + y * cos(theta) + phase));
         }
     }
 };
