@@ -316,8 +316,6 @@ public:
                 // TODO V1's activation function should be omitted too (p. 8)
                 sheetStep(LGN_ON, gainControlWeights);
                 sheetStep(LGN_OFF, gainControlWeights);
-                // TODO Should not be needed because there are no CX self connections
-                zero_X(CX);
                 // Do not perform any settling steps because "responses to afferent stimulation alone [...] provide a
                 // sufficient approximation" (p. 478).
                 sheetStep(
