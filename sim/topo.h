@@ -507,15 +507,34 @@ public:
         }
     }
 
-    // TODO amplitude not used
-    void Grating(HexGrid *hg, double theta, double phase, double width, double amplitude) {
-#pragma omp parallel for default(none) shared(hg) shared(width) shared(theta) shared(phase)
+    /**
+     * @param hg         Points to rotate
+     * @param theta      Rotation angle
+     * @param phase      Phase shift of sinusoid [0, 2π]
+     * @param frequency  Frequency of sinusoid
+     * @param amplitude  Amplitude of sinusoid
+     */
+    void Grating(HexGrid *hg, double theta, double phase, double frequency, double amplitude) {
+#pragma omp parallel for default(none) shared(hg) shared(frequency) shared(theta) shared(phase) shared(amplitude)
         for (size_t hi = 0; hi < this->nhex; ++hi) {
             auto x = hg->vhexen[hi]->x;
             auto y = hg->vhexen[hi]->y;
 
-            // TODO Where is this described?
-            this->X[hi] = sin(width * (x * sin(theta) + y * cos(theta) + phase));
+            /**
+             * project (x, y) into polar coordinates, assuming radius r and angle alpha:
+             *   x = r * cos(alpha)
+             *   y = r * sin(alpha)
+             * rotating this point about angle theta gives the y-coordinate:
+             *   rot_y = r * sin(theta + alpha)
+             * addition identity:
+             *   rot_y = r * sin(theta) * cos(alpha) + r * cos(theta) * sin(alpha)
+             * substituting x and y into rot_y yields:
+             *   rot_y = x * sin(theta) + y * cos(theta)
+             */
+            auto rot_y = x * sin(theta) + y * cos(theta);
+
+            // Apply sinusoid to y-coordinate of rotated point
+            this->X[hi] = amplitude * sin(frequency * rot_y + phase);
         }
     }
 };

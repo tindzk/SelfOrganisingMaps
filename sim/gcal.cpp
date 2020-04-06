@@ -303,11 +303,12 @@ public:
             std::fill(maxPhaseTemp.begin(), maxPhaseTemp.end(), lowestDouble);
 
             // current test orientation
-            double theta = i * M_PI / (double) numOrientations;
+            // orientations are π-periodic
+            double theta = (double) i / numOrientations * M_PI;
 
             for (size_t j = 0; j < numPhases; j++) {
-                // orientations are π-periodic
-                double phase = ((double) j / numPhases) * M_PI;
+                // Grating() takes a phase value in the range [0, 2π]
+                double phase = (double) j / numPhases * 2 * M_PI;
 
                 // Present sine gratings
                 IN.Grating(hgIn, theta, phase, gratingWidth, 1.0);
