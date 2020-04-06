@@ -508,6 +508,8 @@ public:
     }
 
     /**
+     * Sine gratings
+     *
      * @param hg         Points to rotate
      * @param theta      Rotation angle
      * @param phase      Phase shift of sinusoid [0, 2π]

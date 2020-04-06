@@ -40,10 +40,10 @@ public:
     CortexSOM<double> CX;
     HexGrid* hgCx;
 
-    // preferred orientation for each cortical unit
+    // preferred orientation [0, π] for each cortical unit
     vector<double> preferredOrientation;
 
-    // average orientation selectivity for each cortical unit
+    // average orientation selectivity [0, 1] for each cortical unit
     vector<double> selectivity;
 
     // maximum selectivity across all simulations
@@ -276,15 +276,19 @@ public:
      * Calculate preference map according to weighted average method described in Miikulainen (2004), appendix G and
      * Stevens et al. (2013).
      *
-     * Present orientations [0, π] at varying phases to the network as sine gratings. For each unit, calculate the
-     * maximum phase from the cortical activations. Finally, compute the preferred orientation and average selectivity
-     * for each unit.
+     * Present shifted orientations [0, π] to the network as sine gratings. For each unit, calculate the
+     * maximum phase from the cortical activations. Finally, compute the preferred orientation and average
+     * selectivity for each unit.
      */
     void map() {
         // From Stevens et al. (2013, p. 8)
         size_t numOrientations = 20;
         size_t numPhases = 8;
-        // TODO Authors also present gratings for a range of contrasts
+
+        // The amplitude corresponds to the contrast.
+        // Stevens et al. present gratings for a range of contrasts, but a fixed value can be used as long as
+        // contrast-gain control is enabled.
+        auto amplitude = 1.0;
 
         size_t gratingWidth = 30;
 
@@ -311,10 +315,10 @@ public:
                 double phase = (double) j / numPhases * 2 * M_PI;
 
                 // Present sine gratings
-                IN.Grating(hgIn, theta, phase, gratingWidth, 1.0);
+                IN.Grating(hgIn, theta, phase, gratingWidth, amplitude);
 
                 // Perform LGN and CX sheet steps, but without lateral interactions
-                // TODO V1's activation function should be omitted too (p. 8)
+                // Note that this triggers the V1 activation function which could be omitted as per p. 8
                 sheetStep(LGN_ON, gainControlWeights);
                 sheetStep(LGN_OFF, gainControlWeights);
                 // Do not perform any settling steps because "responses to afferent stimulation alone [...] provide a
@@ -342,24 +346,24 @@ public:
         }
 
         for (size_t i = 0; i < CX.nhex; i++) {
-            // Preferred orientation of unit i
-            // Eqn. 3
-            // TODO G.2 does not contain M_PI
+            // Preferred orientation of unit i (eqn. G.2)
+            // atan2(x, y) returns a value in range [-π, π]
+            // `+ π` was added to G.2 such that the preferred orientation becomes positive, i.e. [0, π]
             preferredOrientation[i] = .5 * (atan2(sumVy[i], sumVx[i]) + M_PI);
 
-            // Eqn. G.3
-            // Magnitude of summed vectors V
+            // Magnitude of summed vectors V (eqn. G.3)
             selectivity[i] = sqrt(sumVx[i] * sumVx[i] + sumVy[i] * sumVy[i]);
         }
 
         // Stevens et al. (2003, p. 7) use the maximum selectivity rather than the sum of selectivity values as in
         // Miikulainen (2004, p. 477).
         // The maximum selectivity is calculated across all simulations (p. 7).
-        // TODO Check
         for (size_t j = 0; j < CX.nhex; j++) maxSelectivity = max(maxSelectivity, selectivity[j]);
 
         // Calculate average orientation selectivity values
         // Eqn. G.3 (cont.)
+        // The maximum selectivity is chosen instead of the sum of selectivity values such that selectivity[i] is in the
+        // range [0, 1].
         for (size_t i = 0; i < CX.nhex; i++) selectivity[i] /= maxSelectivity;
     }
 
