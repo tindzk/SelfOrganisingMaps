@@ -1,12 +1,13 @@
 {
-    	"logpath" : "logs",
+  	"logpath" : "logs",
 	"IN_svgpath" : "boundaries/trial.svg",
 	"LGN_svgpath" : "boundaries/trial.svg",
 	"CX_svgpath" : "boundaries/trial.svg",
 	"homeostasis" : true,	
 	"blocks": 21,
 	"steps": 1000,
-	"settle": 16,
+	"settleLgn": 2,
+	"settleV1": 16,
 	"beta" : 0.991,
 	"lambda" : 0.01,
 	"mu" : 0.024,
@@ -25,10 +26,11 @@
 	"afferRadius" : 0.27,
 	"excitRadius" : 0.1,
 	"inhibRadius" : 0.23,
+	"lateralRadius" : 0.25,
 	"afferSigma" : 0.27,
 	"excitSigma" : 0.025,
 	"inhibSigma" : 0.075,
 	"LGNCenterSigma": 0.037,
-	"LGNSuroundSigma": 0.150
-
+	"LGNSurroundSigma": 0.150,
+	"LGNLateralSigma": 0.25
 }

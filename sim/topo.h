@@ -177,8 +177,11 @@ public:
      *
      * @param alpha           learning rate
      * @param strength        multiplier for overall strength of connections
-     * @param gamma_S         strength of feedforward contrast-gain control
+     * @param k               offset for contrast-gain control
+     * @param gamma_S         strength of contrast-gain control
      * @param normaliseAlphas normalise learning rate by individual unit connection density
+     *
+     * To disable contrast-gain control, set k = 1 and gamma_S = 0.
      */
     Projection(Flt* Xsrc,
                ConnectionField<Flt> connections,
@@ -342,6 +345,7 @@ void sheetStep(RD_Sheet<Flt>& sheet, const vector<Projection<Flt>>& projections,
              * strength of the projection
              */
             auto activation = 0.;
+            // receptive field
             for (size_t hj = 0; hj < p.connections.counts[hi]; hj++) {
                 auto afferentConnection = p.Xsrc[p.connections.srcId[hi * p.connections.nSrc + hj]];
                 activation += afferentConnection * p.connections.weights[hi * p.connections.nSrc + hj];
@@ -350,8 +354,10 @@ void sheetStep(RD_Sheet<Flt>& sheet, const vector<Projection<Flt>>& projections,
 
             // normalisation term for contrast-gain control
             auto normalisation = 1.;
-            if (gainControlWeights != NULL)  {
+            if (p.k != 1 && p.gamma_S != 0.) {
+                assert(gainControlWeights != NULL);
                 normalisation = 0.;
+                // suppressive field
                 for (size_t hj = 0; hj < p.connections.counts[hi]; hj++)
                     normalisation += sheet.X[hi] * gainControlWeights[hi * p.connections.nSrc + hj];
                 normalisation *= p.gamma_S;
