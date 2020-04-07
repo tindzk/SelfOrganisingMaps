@@ -487,6 +487,14 @@ public:
 #pragma omp parallel for default(none)
         for (size_t hi = 0; hi < this->nhex; ++hi) {
             // Calculate average given degree of smoothing (beta) as per eq. 7
+            //
+            // homeostasis() is called after the sheet steps. Assuming we are at the
+            // imaginary timestep `t`, then `eta_j(t)` becomes `this->X[hi]`.
+            //
+            // `t-1` refers to the previous state of all variables. On the right hand
+            // side of the assignment, we can thus refer to `Xavg[hi]` in place of
+            // `eta^hat_j(t-1)`.
+            //
             Xavg[hi] = (1. - params.beta) * this->X[hi] + params.beta * Xavg[hi];
 
             // Update thresholds as per eq. 8
