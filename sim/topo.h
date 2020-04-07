@@ -523,14 +523,14 @@ public:
             auto y = hg->vhexen[hi]->y;
 
             /**
-             * project (x, y) into polar coordinates, assuming radius r and angle alpha:
+             * Project point (x, y) into polar coordinates, assuming radius r and angle alpha:
              *   x = r * cos(alpha)
              *   y = r * sin(alpha)
-             * rotating this point about angle theta gives the y-coordinate:
+             * Rotate this point about angle theta gives the y-coordinate:
              *   rot_y = r * sin(theta + alpha)
-             * addition identity:
+             * Apply trigonometric addition identity:
              *   rot_y = r * sin(theta) * cos(alpha) + r * cos(theta) * sin(alpha)
-             * substituting x and y into rot_y yields:
+             * Substitute x and y into rot_y:
              *   rot_y = x * sin(theta) + y * cos(theta)
              */
             auto rot_y = x * sin(theta) + y * cos(theta);

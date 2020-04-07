@@ -273,7 +273,7 @@ public:
     }
 
     /**
-     * Calculate preference map according to weighted average method described in Miikulainen (2004), appendix G and
+     * Calculate preference map according to weighted average method described in Miikkulainen (2004), appendix G and
      * Stevens et al. (2013).
      *
      * Present shifted orientations [0, π] to the network as sine gratings. For each unit, calculate the
@@ -336,7 +336,7 @@ public:
             for (size_t k = 0; k < CX.nhex; k++) {
                 // Calculate orientation preference vector "with peak response as the length and 2θ as its orientation"
                 // (Stevens et al., 2003).
-                // Use factor 2 because activations calculated for π-periodic orientation.
+                // Use factor 2 because activations are calculated for π-periodic orientations.
                 sumVx[k] += maxPhaseTemp[k] * cos(2. * theta);
                 sumVy[k] += maxPhaseTemp[k] * sin(2. * theta);
             }
@@ -356,7 +356,7 @@ public:
         }
 
         // Stevens et al. (2003, p. 7) use the maximum selectivity rather than the sum of selectivity values as in
-        // Miikulainen (2004, p. 477).
+        // Miikkulainen (2004, p. 477).
         // The maximum selectivity is calculated across all simulations (p. 7).
         for (size_t j = 0; j < CX.nhex; j++) maxSelectivity = max(maxSelectivity, selectivity[j]);
 
