@@ -353,8 +353,8 @@ public:
 
                 // Perform LGN and CX sheet steps, but without lateral interactions
                 // Note that this triggers the V1 activation function which could be omitted as per p. 8
-                sheetStep(LGN_ON, gainControlWeights);
-                sheetStep(LGN_OFF, gainControlWeights);
+                sheetStep(LGN_ON, { LGN_ON.Projections[0], LGN_ON.Projections[1] }, (double*) NULL);
+                sheetStep(LGN_OFF, { LGN_OFF.Projections[0], LGN_OFF.Projections[1] }, (double*) NULL);
                 // Do not perform any settling steps because "responses to afferent stimulation alone [...] provide a
                 // sufficient approximation" (p. 478).
                 sheetStep(
