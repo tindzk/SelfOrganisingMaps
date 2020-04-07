@@ -40,7 +40,15 @@ public:
     CortexSOM<double> CX;
     HexGrid* hgCx;
 
-    vector<double> pref, sel;
+    // preferred orientation [0, π] for each cortical unit
+    vector<double> preferredOrientation;
+
+    // average orientation selectivity [0, 1] for each cortical unit
+    vector<double> selectivity;
+
+    // maximum selectivity across all simulations
+    double maxSelectivity = lowestDouble;
+
     bool homeostasis;
 
     // Number of settling steps
@@ -54,6 +62,8 @@ public:
     float sigmaA, sigmaB, afferRadius, excitRadius, inhibRadius, afferSigma, excitSigma, inhibSigma, LGNCenterSigma, LGNSurroundSigma;
 
     double* gainControlWeights;
+
+    static constexpr double lowestDouble = std::numeric_limits<double>::lowest();
 
     void init(Json::Value root) {
         // Read parameters from JSON
@@ -160,8 +170,8 @@ public:
         renormalise(CX, {2 /* recurrent excitatory projection */});
         renormalise(CX, {3 /* recurrent inhibitory projection */});
 
-        pref.resize(CX.nhex, 0.);
-        sel.resize(CX.nhex, 0.);
+        preferredOrientation.resize(CX.nhex, 0.);
+        selectivity.resize(CX.nhex, 0.);
     }
 
     /**
@@ -217,7 +227,7 @@ public:
      * @param f called for every settling step with grid and activations
      */
     void stepCortex(const std::function<void(HexGrid*, vector<double>&)> f) {
-        zero_X(CX);
+        zero_X(CX);  // Required because of CX's self connections
 
         // From paper: "Once all 16 settling steps are complete, the settled V1 activation pattern is deemed to be the
         // V1 response to the presented pattern."
@@ -252,70 +262,109 @@ public:
 
     void plotMap(morph::Gdisplay disp) {
         disp.resetDisplay(vector<double>(3, 0.), vector<double>(3, 0.), vector<double>(3, 0.));
-        double maxSel = -1e9;
-        for (size_t i = 0; i < CX.nhex; i++) {
-            if (sel[i] > maxSel) { maxSel = sel[i]; }
-        }
-        maxSel = 1. / maxSel;
-        double overPi = 1. / M_PI;
 
         int i = 0;
         for (auto h : hgCx->hexen) {
-            array<float, 3> cl = morph::Tools::HSVtoRGB(pref[i] * overPi, 1.0, sel[i] * maxSel);
+            array<float, 3> cl = morph::Tools::HSVtoRGB(preferredOrientation[i] / M_PI, 1.0, selectivity[i]);
             disp.drawHex(h.position(), array<float, 3>{0., 0., 0.}, (h.d * 0.5f), cl);
             i++;
         }
         disp.redrawDisplay();
     }
 
+    /**
+     * Calculate preference map according to weighted average method described in Miikkulainen (2004), appendix G and
+     * Stevens et al. (2013).
+     *
+     * Present shifted orientations [0, π] to the network as sine gratings. For each unit, calculate the
+     * maximum phase from the cortical activations. Finally, compute the preferred orientation and average
+     * selectivity for each unit.
+     */
     void map() {
-        size_t nOr = 20;
-        size_t nPhase = 8;
-        auto phaseInc = M_PI / (double) nPhase;
-        vector<int> maxIndOr(CX.nhex, 0);
-        vector<double> maxValOr(CX.nhex, -1e9);
-        vector<double> maxPhase(CX.nhex, 0.);
-        vector<double> Vx(CX.nhex);
-        vector<double> Vy(CX.nhex);
+        // From Stevens et al. (2013, p. 8)
+        size_t numOrientations = 20;
+        size_t numPhases = 8;
 
-        // Do not perform any steps for CX's self connections
-        vector<Projection<double>> afferent = {
-                CX.Projections[0] /* LGN ON */,
-                CX.Projections[1] /* LGN OFF */
-        };
+        // The amplitude corresponds to the contrast.
+        // Stevens et al. present gratings for a range of contrasts, but a fixed value can be used as long as
+        // contrast-gain control is enabled.
+        auto amplitude = 1.0;
 
-        for (size_t i = 0; i < nOr; i++) {
-            double theta = i * M_PI / (double) nOr;
-            std::fill(maxPhase.begin(), maxPhase.end(), -1e9);
-            for (size_t j = 0; j < nPhase; j++) {
-                double phase = j * phaseInc;
-                IN.Grating(hgIn, theta, phase, 30.0, 1.0);
+        size_t gratingWidth = 30;
+
+        // Sum of orientation preference vectors V
+        vector<double> sumVx(CX.nhex);
+        vector<double> sumVy(CX.nhex);
+
+        // current orientation's maximum phase for each cortical unit
+        vector<double> maxPhaseTemp(CX.nhex, lowestDouble);
+
+        // maximum phase for each cortical unit across all orientations
+        // corresponds to eta^_phi in G.1.3
+        vector<double> maxPhase(CX.nhex, lowestDouble);
+
+        for (size_t i = 0; i < numOrientations; i++) {
+            std::fill(maxPhaseTemp.begin(), maxPhaseTemp.end(), lowestDouble);
+
+            // current test orientation
+            // orientations are π-periodic
+            double theta = (double) i / numOrientations * M_PI;
+
+            for (size_t j = 0; j < numPhases; j++) {
+                // Grating() takes a phase value in the range [0, 2π]
+                double phase = (double) j / numPhases * 2 * M_PI;
+
+                // Present sine gratings
+                IN.Grating(hgIn, theta, phase, gratingWidth, amplitude);
+
+                // Perform LGN and CX sheet steps, but without lateral interactions
+                // Note that this triggers the V1 activation function which could be omitted as per p. 8
                 sheetStep(LGN_ON, gainControlWeights);
                 sheetStep(LGN_OFF, gainControlWeights);
-                zero_X(CX);  // Required because of CX's self connections
-                sheetStep(CX, afferent, (double*) NULL);
-                for (size_t k = 0; k < maxPhase.size(); k++) {
-                    if (maxPhase[k] < CX.X[k]) maxPhase[k] = CX.X[k];
-                }
+                // Do not perform any settling steps because "responses to afferent stimulation alone [...] provide a
+                // sufficient approximation" (p. 478).
+                sheetStep(
+                        CX,
+                        { CX.Projections[0] /* LGN ON */, CX.Projections[1] /* LGN OFF */ },
+                        (double*) NULL);
+
+                // Record peak responses for current orientation
+                for (size_t k = 0; k < CX.nhex; k++)
+                    maxPhaseTemp[k] = max(maxPhaseTemp[k], CX.X[k]);
             }
 
-            for (size_t k = 0; k < maxPhase.size(); k++) {
-                Vx[k] += maxPhase[k] * cos(2.0 * theta);
-                Vy[k] += maxPhase[k] * sin(2.0 * theta);
+            for (size_t k = 0; k < CX.nhex; k++) {
+                // Calculate orientation preference vector "with peak response as the length and 2θ as its orientation"
+                // (Stevens et al., 2003).
+                // Use factor 2 because activations are calculated for π-periodic orientations.
+                sumVx[k] += maxPhaseTemp[k] * cos(2. * theta);
+                sumVy[k] += maxPhaseTemp[k] * sin(2. * theta);
             }
 
-            for (size_t k = 0; k < maxPhase.size(); k++) {
-                if (maxValOr[k] < maxPhase[k]) {
-                    maxValOr[k] = maxPhase[k];
-                    maxIndOr[k] = i;
-                }
-            }
+            for (size_t k = 0; k < CX.nhex; k++)
+                maxPhase[k] = max(maxPhase[k], maxPhaseTemp[k]);
         }
 
-        for (size_t i = 0; i < maxValOr.size(); i++) {
-            pref[i] = 0.5 * (atan2(Vy[i], Vx[i]) + M_PI);
-            sel[i] = sqrt(Vy[i] * Vy[i] + Vx[i] * Vx[i]);
+        for (size_t i = 0; i < CX.nhex; i++) {
+            // Preferred orientation of unit i (eqn. G.2)
+            // atan2(x, y) returns a value in range [-π, π]
+            // `+ π` was added to G.2 such that the preferred orientation becomes positive, i.e. [0, π]
+            preferredOrientation[i] = .5 * (atan2(sumVy[i], sumVx[i]) + M_PI);
+
+            // Magnitude of summed vectors V (eqn. G.3)
+            selectivity[i] = sqrt(sumVx[i] * sumVx[i] + sumVy[i] * sumVy[i]);
         }
+
+        // Stevens et al. (2003, p. 7) use the maximum selectivity rather than the sum of selectivity values as in
+        // Miikkulainen (2004, p. 477).
+        // The maximum selectivity is calculated across all simulations (p. 7).
+        for (size_t j = 0; j < CX.nhex; j++) maxSelectivity = max(maxSelectivity, selectivity[j]);
+
+        // Calculate average orientation selectivity values
+        // Eqn. G.3 (cont.)
+        // The maximum selectivity is chosen instead of the sum of selectivity values such that selectivity[i] is in the
+        // range [0, 1].
+        for (size_t i = 0; i < CX.nhex; i++) selectivity[i] /= maxSelectivity;
     }
 
     void save(const string filename) {
