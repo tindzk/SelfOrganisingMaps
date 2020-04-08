@@ -37,14 +37,25 @@ public:
     // LGN OFF cells
     RD_Sheet<double> LGN_OFF;
 
+    // Layer 4
     CortexSOM<double> CX;
     HexGrid* hgCx;
 
-    // preferred orientation [0, π] for each cortical unit
+    // Layer 2/3
+    CortexSOM<double> CX2;
+    HexGrid* hgCx2;
+
+    // preferred orientation [0, π] for each cortical unit in CX
     vector<double> preferredOrientation;
 
-    // average orientation selectivity [0, 1] for each cortical unit
+    // average orientation selectivity [0, 1] for each cortical unit in CX
     vector<double> selectivity;
+
+    // preferred orientation [0, π] for each cortical unit in CX2
+    vector<double> preferredOrientation2;
+
+    // average orientation selectivity [0, 1] for each cortical unit in CX2
+    vector<double> selectivity2;
 
     // maximum selectivity across all simulations
     double maxSelectivity = lowestDouble;
@@ -134,10 +145,12 @@ public:
         hgIn = createHexGrid(root.get("IN_svgpath", "boundaries/trialmod.svg").asString());
         hgLgn = createHexGrid(root.get("LGN_svgpath", "boundaries/trialmod.svg").asString());
         hgCx = createHexGrid(root.get("CX_svgpath", "boundaries/trialmod.svg").asString());
+        hgCx2 = createHexGrid(root.get("CX_svgpath", "boundaries/trialmod.svg").asString());
 
         auto squaresIn = squaresFromHexGrid(hgIn);
         auto squaresLgn = squaresFromHexGrid(hgLgn);
         auto squaresCx = squaresFromHexGrid(hgCx);
+        auto squaresCx2 = squaresFromHexGrid(hgCx2);
 
         // Mapping between Hexagonal and Cartesian Sheet
         HCM.init(hgHcm->num());
@@ -186,6 +199,7 @@ public:
         if (gainControl) renormalise(LGN_OFF, {2 /* recurrent inhibitory projection */});
 
         // Cortex Sheet (V1)
+        // Layer 4
         CX.init(hgCx->num(), {.beta = beta, .mu = mu, .lambda = lambda, .thetaInit = thetaInit});
         // k = 1, gamma_S = 0 because no contrast-gain control for V1
         CX.connect({
@@ -203,6 +217,26 @@ public:
 
         preferredOrientation.resize(CX.nhex, 0.);
         selectivity.resize(CX.nhex, 0.);
+
+        // Cortex Sheet (V1)
+        // Layer 2/3
+        CX2.init(hgCx2->num(), {.beta = beta, .mu = mu, .lambda = lambda, .thetaInit = thetaInit});
+        CX2.connect({
+            // afferent projections from layer 4 cells
+            Projection<double>(CX.X, createConnectionField<double>(squaresCx, squaresCx2, afferRadius, afferSigma, true), afferStrength * 0.5, 1, 0, afferAlpha, true),
+            // recurrent lateral excitatory/inhibitory projections from other layer 2/3 cells
+            Projection<double>(CX2.X, createConnectionField<double>(squaresCx2, squaresCx2, excitRadius, excitSigma, false), excitStrength, 1, 0, excitAlpha, true),
+            Projection<double>(CX2.X, createConnectionField<double>(squaresCx2, squaresCx2, inhibRadius, inhibSigma, true), inhibStrength, 1, 0, inhibAlpha, true)
+        });
+
+        // TODO implement projections: feedback excitatory, feedback inhibitory
+
+        renormalise(CX2, {0});
+        renormalise(CX2, {1});
+        renormalise(CX2, {2});
+
+        preferredOrientation2.resize(CX2.nhex, 0.);
+        selectivity2.resize(CX2.nhex, 0.);
     }
 
     /**
@@ -258,9 +292,14 @@ public:
     /**
      * Cortical step
      *
-     * @param f called for every settling step with grid and activations
+     * @param f called for every settling step with grid and activations (CX)
+     * @param g called for every settling step with grid and activations (CX2)
      */
-    void stepCortex(const std::function<void(HexGrid*, vector<double>&)> f) {
+    void stepCortex(
+            const std::function<void(HexGrid*, vector<double>&)> f,
+            const std::function<void(HexGrid*, vector<double>&)> g
+    ) {
+        printf("CX: Layer 4\n");
         zero_X(CX);  // Required because of CX's self connections
 
         // From paper: "Once all 16 settling steps are complete, the settled V1 activation pattern is deemed to be the
@@ -281,6 +320,20 @@ public:
         learn(CX, {3}); /* recurrent inhibitory projection */
 
         if (homeostasis) CX.homeostasis();
+
+        // Layer 2/3
+        printf("CX: Layer 2/3\n");
+        zero_X(CX2);
+        for (size_t j = 0; j < settleV1; j++) {
+            sheetStep(CX2, (double*) NULL);
+            auto a = activations(CX2);
+            g(hgCx2, a);
+        }
+        learn(CX2, {0});
+        learn(CX2, {1});
+        learn(CX2, {2});
+        if (homeostasis) CX2.homeostasis();
+
         time++;
     }
 
@@ -517,7 +570,7 @@ int main(int argc, char **argv) {
                 Net.map();
                 for (size_t i = 0; i < steps; i++) {
                     Net.stepAfferent(INTYPE);
-                    Net.stepCortex(plotActivations);
+                    Net.stepCortex(plotActivations, plotActivations);
                 }
                 if (!outputPath.empty())
                     Net.save(StrFormat("%s/weights_%i.h5", outputPath, Net.time));
@@ -528,15 +581,21 @@ int main(int argc, char **argv) {
         case 1: { // Plotting
             vector<morph::Gdisplay> displays;
             displays.push_back(morph::Gdisplay(600, 600, 0, 0, "Input Activity", 1.7, 0.0, 0.0));
-            displays.push_back(morph::Gdisplay(600, 600, 0, 0, "Cortical Activity", 1.7, 0.0, 0.0));
+            displays.push_back(morph::Gdisplay(600, 600, 0, 0, "Cortical Activity (layer 4)", 1.7, 0.0, 0.0));
             displays.push_back(morph::Gdisplay(1200, 400, 0, 0, "Cortical Projection", 1.7, 0.0, 0.0));
             displays.push_back(morph::Gdisplay(600, 300, 0, 0, "LGN ON/OFF", 1.7, 0.0, 0.0));
             displays.push_back(morph::Gdisplay(600, 600, 0, 0, "Map", 1.7, 0.0, 0.0));
+            displays.push_back(morph::Gdisplay(600, 600, 0, 0, "Cortical Activity (layer 2/3)", 1.7, 0.0, 0.0));
 
             vector<double> fx(3, 0.);
             RD_Plot<double> plt(fx, fx, fx);
-            auto plotActivations = [&displays, fx, &plt](HexGrid* hg, vector<double>& X) {
+            auto plotActivations = [&displays, &plt](HexGrid* hg, vector<double>& X) {
                 plt.scalarfields(displays[1], hg, X);
+            };
+            vector<double> fx2(3, 0.);
+            RD_Plot<double> plt2(fx2, fx2, fx2);
+            auto plotActivations2 = [&displays, &plt2](HexGrid* hg, vector<double>& X) {
+                plt2.scalarfields(displays[5], hg, X);
             };
 
             for (auto &d: displays) {
@@ -549,7 +608,7 @@ int main(int argc, char **argv) {
                 for (size_t i = 0; i < steps; i++) {
                     Net.stepAfferent(INTYPE);
                     Net.plotAfferent(displays[0], displays[3]);
-                    Net.stepCortex(plotActivations);
+                    Net.stepCortex(plotActivations, plotActivations2);
                     Net.plotWeights(displays[2], 500);
                 }
                 if (!outputPath.empty())
@@ -581,7 +640,7 @@ int main(int argc, char **argv) {
             Net.plotMap(displays[4]);
             Net.stepAfferent(INTYPE);
             Net.plotAfferent(displays[0], displays[3]);
-            Net.stepCortex(plotActivations);
+            Net.stepCortex(plotActivations, nullptr);  // TODO
             Net.plotWeights(displays[2], 500);
             for (size_t i = 0; i < displays.size(); i++) {
                 displays[i].redrawDisplay();
