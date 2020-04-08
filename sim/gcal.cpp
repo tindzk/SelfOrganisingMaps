@@ -51,14 +51,13 @@ public:
     // average orientation selectivity [0, 1] for each cortical unit in CX
     vector<double> selectivity;
 
-    // preferred orientation [0, π] for each cortical unit in CX2
-    vector<double> preferredOrientation2;
-
-    // average orientation selectivity [0, 1] for each cortical unit in CX2
-    vector<double> selectivity2;
-
     // maximum selectivity across all simulations
     double maxSelectivity = lowestDouble;
+
+    // CX2
+    vector<double> preferredOrientation2;
+    vector<double> selectivity2;
+    double maxSelectivity2 = lowestDouble;
 
     bool homeostasis;
 
@@ -223,7 +222,7 @@ public:
         CX2.init(hgCx2->num(), {.beta = beta, .mu = mu, .lambda = lambda, .thetaInit = thetaInit});
         CX2.connect({
             // afferent projections from layer 4 cells
-            Projection<double>(CX.X, createConnectionField<double>(squaresCx, squaresCx2, afferRadius, afferSigma, true), afferStrength * 0.5, 1, 0, afferAlpha, true),
+            Projection<double>(CX.X, createConnectionField<double>(squaresCx, squaresCx2, afferRadius, afferSigma, true), afferStrength, 1, 0, afferAlpha, true),
             // recurrent lateral excitatory/inhibitory projections from other layer 2/3 cells
             Projection<double>(CX2.X, createConnectionField<double>(squaresCx2, squaresCx2, excitRadius, excitSigma, false), excitStrength, 1, 0, excitAlpha, true),
             Projection<double>(CX2.X, createConnectionField<double>(squaresCx2, squaresCx2, inhibRadius, inhibSigma, true), inhibStrength, 1, 0, inhibAlpha, true)
@@ -359,6 +358,18 @@ public:
         disp.redrawDisplay();
     }
 
+    void plotMap2(morph::Gdisplay disp) {
+        disp.resetDisplay(vector<double>(3, 0.), vector<double>(3, 0.), vector<double>(3, 0.));
+
+        int i = 0;
+        for (auto h : hgCx->hexen) {
+            array<float, 3> cl = morph::Tools::HSVtoRGB(preferredOrientation2[i] / M_PI, 1.0, selectivity2[i]);
+            disp.drawHex(h.position(), array<float, 3>{0., 0., 0.}, (h.d * 0.5f), cl);
+            i++;
+        }
+        disp.redrawDisplay();
+    }
+
     /**
      * Calculate preference map according to weighted average method described in Miikkulainen (2004), appendix G and
      * Stevens et al. (2013).
@@ -452,6 +463,49 @@ public:
         // The maximum selectivity is chosen instead of the sum of selectivity values such that selectivity[i] is in the
         // range [0, 1].
         for (size_t i = 0; i < CX.nhex; i++) selectivity[i] /= maxSelectivity;
+    }
+
+    void map2() {
+        size_t numOrientations = 20;
+        size_t numPhases = 8;
+        auto amplitude = 1.0;
+        size_t gratingWidth = 30;
+        vector<double> sumVx(CX2.nhex);
+        vector<double> sumVy(CX2.nhex);
+        vector<double> maxPhaseTemp(CX2.nhex, lowestDouble);
+        vector<double> maxPhase(CX2.nhex, lowestDouble);
+        for (size_t i = 0; i < numOrientations; i++) {
+            std::fill(maxPhaseTemp.begin(), maxPhaseTemp.end(), lowestDouble);
+            double theta = (double) i / numOrientations * M_PI;
+            for (size_t j = 0; j < numPhases; j++) {
+                double phase = (double) j / numPhases * 2 * M_PI;
+                IN.Grating(hgIn, theta, phase, gratingWidth, amplitude);
+                sheetStep(LGN_ON, { LGN_ON.Projections[0], LGN_ON.Projections[1] }, (double*) NULL);
+                sheetStep(LGN_OFF, { LGN_OFF.Projections[0], LGN_OFF.Projections[1] }, (double*) NULL);
+                sheetStep(
+                        CX,
+                        { CX.Projections[0] /* LGN ON */, CX.Projections[1] /* LGN OFF */ },
+                        (double*) NULL);
+                sheetStep(
+                        CX2,
+                        { CX2.Projections[0] /* CX */ },
+                        (double*) NULL);
+                for (size_t k = 0; k < CX2.nhex; k++)
+                    maxPhaseTemp[k] = max(maxPhaseTemp[k], CX2.X[k]);
+            }
+            for (size_t k = 0; k < CX2.nhex; k++) {
+                sumVx[k] += maxPhaseTemp[k] * cos(2. * theta);
+                sumVy[k] += maxPhaseTemp[k] * sin(2. * theta);
+            }
+            for (size_t k = 0; k < CX2.nhex; k++)
+                maxPhase[k] = max(maxPhase[k], maxPhaseTemp[k]);
+        }
+        for (size_t i = 0; i < CX2.nhex; i++) {
+            preferredOrientation2[i] = .5 * (atan2(sumVy[i], sumVx[i]) + M_PI);
+            selectivity2[i] = sqrt(sumVx[i] * sumVx[i] + sumVy[i] * sumVy[i]);
+        }
+        for (size_t j = 0; j < CX2.nhex; j++) maxSelectivity2 = max(maxSelectivity2, selectivity2[j]);
+        for (size_t i = 0; i < CX2.nhex; i++) selectivity2[i] /= maxSelectivity2;
     }
 
     void save(const string filename) {
@@ -581,11 +635,12 @@ int main(int argc, char **argv) {
         case 1: { // Plotting
             vector<morph::Gdisplay> displays;
             displays.push_back(morph::Gdisplay(600, 600, 0, 0, "Input Activity", 1.7, 0.0, 0.0));
-            displays.push_back(morph::Gdisplay(600, 600, 0, 0, "Cortical Activity (layer 4)", 1.7, 0.0, 0.0));
+            displays.push_back(morph::Gdisplay(600, 600, 0, 0, "Cortical Activity (layer 4) - simple", 1.7, 0.0, 0.0));
             displays.push_back(morph::Gdisplay(1200, 400, 0, 0, "Cortical Projection", 1.7, 0.0, 0.0));
             displays.push_back(morph::Gdisplay(600, 300, 0, 0, "LGN ON/OFF", 1.7, 0.0, 0.0));
-            displays.push_back(morph::Gdisplay(600, 600, 0, 0, "Map", 1.7, 0.0, 0.0));
-            displays.push_back(morph::Gdisplay(600, 600, 0, 0, "Cortical Activity (layer 2/3)", 1.7, 0.0, 0.0));
+            displays.push_back(morph::Gdisplay(600, 600, 0, 0, "Map (layer 4) - simple", 1.7, 0.0, 0.0));
+            displays.push_back(morph::Gdisplay(600, 600, 0, 0, "Cortical Activity (layer 2/3) - complex", 1.7, 0.0, 0.0));
+            displays.push_back(morph::Gdisplay(600, 600, 0, 0, "Map (layer 2/3) - complex", 1.7, 0.0, 0.0));
 
             vector<double> fx(3, 0.);
             RD_Plot<double> plt(fx, fx, fx);
@@ -604,7 +659,9 @@ int main(int argc, char **argv) {
             }
             for (size_t b = 0; b < nBlocks; b++) {
                 Net.map();
+                Net.map2();
                 Net.plotMap(displays[4]);
+                Net.plotMap2(displays[6]);
                 for (size_t i = 0; i < steps; i++) {
                     Net.stepAfferent(INTYPE);
                     Net.plotAfferent(displays[0], displays[3]);
