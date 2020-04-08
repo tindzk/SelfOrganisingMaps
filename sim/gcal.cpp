@@ -200,6 +200,11 @@ public:
         // Cortex Sheet (V1)
         // Layer 4
         CX.init(hgCx->num(), {.beta = beta, .mu = mu, .lambda = lambda, .thetaInit = thetaInit});
+
+        // Cortex Sheet (V1)
+        // Layer 2/3
+        CX2.init(hgCx2->num(), {.beta = beta, .mu = mu, .lambda = lambda, .thetaInit = thetaInit});
+
         // k = 1, gamma_S = 0 because no contrast-gain control for V1
         CX.connect({
             // afferent projections from ON/OFF cells
@@ -207,19 +212,21 @@ public:
             Projection<double>(LGN_OFF.X, createConnectionField<double>(squaresLgn, squaresCx, afferRadius, afferSigma, true), afferStrength * 0.5, 1, 0, afferAlpha, true),
             // recurrent lateral excitatory/inhibitory projections from other V1 cells
             Projection<double>(CX.X, createConnectionField<double>(squaresCx, squaresCx, excitRadius, excitSigma, false), excitStrength, 1, 0, excitAlpha, true),
-            Projection<double>(CX.X, createConnectionField<double>(squaresCx, squaresCx, inhibRadius, inhibSigma, true), inhibStrength, 1, 0, inhibAlpha, true)
+            Projection<double>(CX.X, createConnectionField<double>(squaresCx, squaresCx, inhibRadius, inhibSigma, true), inhibStrength, 1, 0, inhibAlpha, true),
+            // feedback excitatory/inhibitory projections from layer 2/3 cells
+            Projection<double>(CX2.X, createConnectionField<double>(squaresCx2, squaresCx, excitRadius, excitSigma, false), excitStrength, 1, 0, excitAlpha, true),
+            Projection<double>(CX2.X, createConnectionField<double>(squaresCx2, squaresCx, inhibRadius, inhibSigma, true), inhibStrength, 1, 0, inhibAlpha, true)
         });
 
         renormalise(CX, {0 /* LGN ON */, 1 /* LGN OFF */});
         renormalise(CX, {2 /* recurrent excitatory projection */});
         renormalise(CX, {3 /* recurrent inhibitory projection */});
+        renormalise(CX, {4 /* feedback excitatory projection */});
+        renormalise(CX, {5 /* feedback inhibitory projection */});
 
         preferredOrientation.resize(CX.nhex, 0.);
         selectivity.resize(CX.nhex, 0.);
 
-        // Cortex Sheet (V1)
-        // Layer 2/3
-        CX2.init(hgCx2->num(), {.beta = beta, .mu = mu, .lambda = lambda, .thetaInit = thetaInit});
         CX2.connect({
             // afferent projections from layer 4 cells
             Projection<double>(CX.X, createConnectionField<double>(squaresCx, squaresCx2, afferRadius, afferSigma, true), afferStrength, 1, 0, afferAlpha, true),
@@ -227,8 +234,6 @@ public:
             Projection<double>(CX2.X, createConnectionField<double>(squaresCx2, squaresCx2, excitRadius, excitSigma, false), excitStrength, 1, 0, excitAlpha, true),
             Projection<double>(CX2.X, createConnectionField<double>(squaresCx2, squaresCx2, inhibRadius, inhibSigma, true), inhibStrength, 1, 0, inhibAlpha, true)
         });
-
-        // TODO implement projections: feedback excitatory, feedback inhibitory
 
         renormalise(CX2, {0});
         renormalise(CX2, {1});
@@ -300,6 +305,7 @@ public:
     ) {
         printf("CX: Layer 4\n");
         zero_X(CX);  // Required because of CX's self connections
+        zero_X(CX2);  // Required because of CX's feedback connections from CX2
 
         // From paper: "Once all 16 settling steps are complete, the settled V1 activation pattern is deemed to be the
         // V1 response to the presented pattern."
@@ -317,12 +323,13 @@ public:
         learn(CX, {0, 1}); /* LGN ON and OFF */
         learn(CX, {2}); /* recurrent excitatory projection */
         learn(CX, {3}); /* recurrent inhibitory projection */
+        learn(CX, {4}); /* feedback excitatory projection */
+        learn(CX, {5}); /* feedback inhibitory projection */
 
         if (homeostasis) CX.homeostasis();
 
         // Layer 2/3
         printf("CX: Layer 2/3\n");
-        zero_X(CX2);
         for (size_t j = 0; j < settleV1; j++) {
             sheetStep(CX2, (double*) NULL);
             auto a = activations(CX2);
@@ -331,7 +338,7 @@ public:
         learn(CX2, {0});
         learn(CX2, {1});
         learn(CX2, {2});
-        if (homeostasis) CX2.homeostasis();
+        if (homeostasis) CX2.homeostasis();  // TODO needed?
 
         time++;
     }
@@ -362,7 +369,7 @@ public:
         disp.resetDisplay(vector<double>(3, 0.), vector<double>(3, 0.), vector<double>(3, 0.));
 
         int i = 0;
-        for (auto h : hgCx->hexen) {
+        for (auto h : hgCx2->hexen) {
             array<float, 3> cl = morph::Tools::HSVtoRGB(preferredOrientation2[i] / M_PI, 1.0, selectivity2[i]);
             disp.drawHex(h.position(), array<float, 3>{0., 0., 0.}, (h.d * 0.5f), cl);
             i++;
@@ -490,6 +497,7 @@ public:
                         CX2,
                         { CX2.Projections[0] /* CX */ },
                         (double*) NULL);
+                // TODO feedback, lateral projections?
                 for (size_t k = 0; k < CX2.nhex; k++)
                     maxPhaseTemp[k] = max(maxPhaseTemp[k], CX2.X[k]);
             }
