@@ -394,12 +394,11 @@ inline double hebbian(
         size_t i,
         size_t j
 ) {
-    auto omega_ij_p = p.connections.weights[i * p.connections.nSrc + j];
     auto alpha_p = p.alphas[i];
     auto eta_i = Xsrc[p.connections.srcId[i * p.connections.nSrc + j]];
     auto eta_j = Xdst[i];
 
-    return omega_ij_p + alpha_p * eta_j * eta_i;
+    return alpha_p * eta_j * eta_i;
 }
 
 /**
@@ -414,20 +413,32 @@ inline double hebbian(
  *
  * @param projections Subset of projections. In the case of V1, this allows excluding self connections.
  */
-void learn(RD_Sheet<double>& sheet, const vector<size_t> projections) {
-    for (auto projectionId: projections) {
-        auto &p = sheet.Projections[projectionId];
+void learn(RD_Sheet<double>& sheet, const vector<size_t>& projections) {
+#pragma omp parallel for default(none) shared(sheet) shared(projections)
+    for (size_t i = 0; i < sheet.nhex; i++) {
+        double sumWeights = 0.;
 
-#pragma omp parallel for default(none) shared(p) shared(sheet)
-        for (size_t i = 0; i < sheet.nhex; i++)
+        for (auto projectionId: projections) {
+            auto &p = sheet.Projections[projectionId];
+
+            for (size_t j = 0; j < p.connections.counts[i]; j++) {
+                if (p.alphas[i] > 0.0) {
+                    auto gradient = hebbian(p, p.Xsrc, sheet.X, i, j);
+                    p.connections.weights[i * p.connections.nSrc + j] += gradient;
+                }
+
+                sumWeights += p.connections.weights[i * p.connections.nSrc + j];
+            }
+        }
+
+        // From paper: "All afferent connection weights from RGC/LGN sheets are normalized together in the model, which
+        // allows V1 neurons to become selective for any subset of the RGC/LGN inputs."
+        for (auto projectionId: projections) {
+            auto &p = sheet.Projections[projectionId];
             for (size_t j = 0; j < p.connections.counts[i]; j++)
-                if (p.alphas[i] > 0.0) p.connections.weights[i * p.connections.nSrc + j] =
-                        hebbian(p, p.Xsrc, sheet.X, i, j);
+                p.connections.weights[i * p.connections.nSrc + j] /= sumWeights;
+        }
     }
-
-    // From paper: "All afferent connection weights from RGC/LGN sheets are normalized together in the model, which
-    // allows V1 neurons to become selective for any subset of the RGC/LGN inputs."
-    renormalise(sheet, projections);
 }
 
 template<class Flt>
