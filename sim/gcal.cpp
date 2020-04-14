@@ -163,10 +163,6 @@ public:
             );
         LGN_ON.connect(projectionsLgnOn);
 
-        renormalise(LGN_ON, {0});
-        renormalise(LGN_ON, {1});
-        if (gainControl) renormalise(LGN_ON, {2 /* recurrent inhibitory projection */});
-
         // LGN OFF cells
         LGN_OFF.init(hgLgn->num());
         vector<Projection<double>> projectionsLgnOff = {
@@ -182,10 +178,6 @@ public:
             );
         LGN_OFF.connect(projectionsLgnOff);
 
-        renormalise(LGN_OFF, {0});
-        renormalise(LGN_OFF, {1});
-        if (gainControl) renormalise(LGN_OFF, {2 /* recurrent inhibitory projection */});
-
         // Cortex Sheet (V1)
         CX.init(hgCx->num(), {.beta = beta, .mu = mu, .lambda = lambda, .thetaInit = thetaInit});
         // k = 1, gamma_S = 0 because no contrast-gain control for V1
@@ -197,10 +189,6 @@ public:
             Projection<double>(CX.X, createConnectionField<double>(squaresCx, squaresCx, excitRadius, excitSigma, false), excitStrength, 1, 0, excitAlpha, true),
             Projection<double>(CX.X, createConnectionField<double>(squaresCx, squaresCx, inhibRadius, inhibSigma, true), inhibStrength, 1, 0, inhibAlpha, true)
         });
-
-        renormalise(CX, {0 /* LGN ON */, 1 /* LGN OFF */});
-        renormalise(CX, {2 /* recurrent excitatory projection */});
-        renormalise(CX, {3 /* recurrent inhibitory projection */});
 
         preferredOrientation.resize(CX.nhex, 0.);
         selectivity.resize(CX.nhex, 0.);

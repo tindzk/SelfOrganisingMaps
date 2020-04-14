@@ -301,26 +301,6 @@ inline void zero_X(RD_Sheet<Flt>& sheet) {
     for (size_t hi = 0; hi < sheet.nhex; ++hi) sheet.X[hi] = 0.;
 }
 
-template<class Flt>
-void renormalise(RD_Sheet<Flt>& sheet, const vector<size_t>& projections) {
-#pragma omp parallel for default(none) shared(projections) shared(sheet)
-    for (size_t i = 0; i < sheet.nhex; i++) {
-        Flt sumWeights = 0.0;
-
-        for (auto projectionId: projections) {
-            auto &p = sheet.Projections[projectionId];
-            for (size_t j = 0; j < p.connections.counts[i]; j++)
-                sumWeights += p.connections.weights[i * p.connections.nSrc + j];
-        }
-
-        for (auto projectionId: projections) {
-            auto &p = sheet.Projections[projectionId];
-            for (size_t j = 0; j < p.connections.counts[i]; j++)
-                p.connections.weights[i * p.connections.nSrc + j] /= sumWeights;
-        }
-    }
-}
-
 /**
  * Eqn. 2
  *
