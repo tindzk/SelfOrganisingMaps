@@ -302,13 +302,6 @@ inline void zero_X(RD_Sheet<Flt>& sheet) {
 }
 
 template<class Flt>
-inline vector<Flt> activations(const RD_Sheet<Flt>& sheet) {
-    vector<Flt> result;
-    for (size_t i = 0; i < sheet.nhex; i++) result.push_back(sheet.X[i]);
-    return result;
-}
-
-template<class Flt>
 void renormalise(RD_Sheet<Flt>& sheet, const vector<size_t>& projections) {
 #pragma omp parallel for default(none) shared(projections) shared(sheet)
     for (size_t i = 0; i < sheet.nhex; i++) {

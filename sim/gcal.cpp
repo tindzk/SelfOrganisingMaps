@@ -17,6 +17,7 @@ using absl::StrFormat;
 #include <absl/flags/parse.h>
 
 #include "topo.h"
+#include "plot.h"
 
 using namespace morph;
 
@@ -248,11 +249,8 @@ public:
         vector<double> fx(3, 0.);
         RD_Plot<double> plt(fx, fx, fx);
 
-        auto a = activations(IN);
-        plt.scalarfields(dispIn, hgIn, a, 0., 1.0);
-
-        vector<vector<double>> L = { activations(LGN_ON), activations(LGN_OFF) };
-        plt.scalarfields(dispLgn, hgLgn, L);
+        scalarfields(plt, dispIn, hgIn, { IN.X }, 0., 1.0);
+        scalarfields(plt, dispLgn, hgLgn, { LGN_ON.X, LGN_OFF.X });
     }
 
     /**
@@ -260,16 +258,14 @@ public:
      *
      * @param f called for every settling step with grid and activations
      */
-    void stepCortex(const std::function<void(HexGrid*, vector<double>&)> f) {
+    void stepCortex(const std::function<void(HexGrid*, RD_Sheet<double>&)> f) {
         zero_X(CX);  // Required because of CX's self connections
 
         // From paper: "Once all 16 settling steps are complete, the settled V1 activation pattern is deemed to be the
         // V1 response to the presented pattern."
         for (size_t j = 0; j < settleV1; j++) {
             sheetStep(CX, (double*) NULL);
-
-            auto a = activations(CX);
-            f(hgCx, a);
+            f(hgCx, CX);
         }
 
         // From paper: "V1 afferent connection weights [...] from the ON/OFF sheets are adjusted once per iteration
@@ -512,7 +508,7 @@ int main(int argc, char **argv) {
 
     switch (MODE) {
         case 0: { // No plotting
-            auto plotActivations = [](HexGrid*, vector<double>&) {};
+            auto plotActivations = [](HexGrid*, RD_Sheet<double>&) {};
             for (size_t b = 0; b < nBlocks; b++) {
                 Net.map();
                 for (size_t i = 0; i < steps; i++) {
@@ -535,8 +531,8 @@ int main(int argc, char **argv) {
 
             vector<double> fx(3, 0.);
             RD_Plot<double> plt(fx, fx, fx);
-            auto plotActivations = [&displays, fx, &plt](HexGrid* hg, vector<double>& X) {
-                plt.scalarfields(displays[1], hg, X);
+            auto plotActivations = [&displays, fx, &plt](HexGrid* hg, RD_Sheet<double>& sheet) {
+                scalarfields(plt, displays[1], hg, { sheet.X });
             };
 
             for (auto &d: displays) {
@@ -569,8 +565,8 @@ int main(int argc, char **argv) {
 
             vector<double> fx(3, 0.);
             RD_Plot<double> plt(fx, fx, fx);
-            auto plotActivations = [&displays, fx, &plt](HexGrid* hg, vector<double>& X) {
-                plt.scalarfields(displays[1], hg, X);
+            auto plotActivations = [&displays, fx, &plt](HexGrid* hg, RD_Sheet<double>& sheet) {
+                scalarfields(plt, displays[1], hg, { sheet.X });
             };
 
             for (auto &d: displays) {
