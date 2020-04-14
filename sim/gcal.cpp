@@ -497,9 +497,10 @@ int main(int argc, char **argv) {
     switch (MODE) {
         case 0: { // No plotting
             auto plotActivations = [](HexGrid*, RD_Sheet<double>&) {};
-            for (size_t b = 0; b < nBlocks; b++) {
+            for (size_t b = 1; b <= nBlocks; b++) {
                 Net.map();
-                for (size_t i = 0; i < steps; i++) {
+                for (size_t i = 1; i <= steps; i++) {
+                    printf("Block %ld/%ld, step %ld/%ld\n", b, nBlocks, i, steps);
                     Net.stepAfferent(INTYPE);
                     Net.stepCortex(plotActivations);
                 }
@@ -527,10 +528,11 @@ int main(int argc, char **argv) {
                 d.resetDisplay(vector<double>(3, 0), vector<double>(3, 0), vector<double>(3, 0));
                 d.redrawDisplay();
             }
-            for (size_t b = 0; b < nBlocks; b++) {
+            for (size_t b = 1; b <= nBlocks; b++) {
                 Net.map();
                 Net.plotMap(displays[4]);
-                for (size_t i = 0; i < steps; i++) {
+                for (size_t i = 1; i <= steps; i++) {
+                    printf("Block %ld/%ld, step %ld/%ld\n", b, nBlocks, i, steps);
                     Net.stepAfferent(INTYPE);
                     Net.plotAfferent(displays[0], displays[3]);
                     Net.stepCortex(plotActivations);
@@ -538,39 +540,11 @@ int main(int argc, char **argv) {
                 }
                 if (!outputPath.empty())
                     Net.save(StrFormat("%s/weights_%i.h5", outputPath, Net.time));
-            }
-            for (auto &d: displays) d.closeDisplay();
-        }
-            break;
-
-        case 2: { // Map only
-            vector<morph::Gdisplay> displays;
-            displays.push_back(morph::Gdisplay(600, 600, 0, 0, "Input Activity", 1.7, 0.0, 0.0));
-            displays.push_back(morph::Gdisplay(600, 600, 0, 0, "Cortical Activity", 1.7, 0.0, 0.0));
-            displays.push_back(morph::Gdisplay(1200, 400, 0, 0, "Cortical Projection", 1.7, 0.0, 0.0));
-            displays.push_back(morph::Gdisplay(600, 300, 0, 0, "LGN ON/OFF", 1.7, 0.0, 0.0));
-            displays.push_back(morph::Gdisplay(600, 600, 0, 0, "Map", 1.7, 0.0, 0.0));
-
-            vector<double> fx(3, 0.);
-            RD_Plot<double> plt(fx, fx, fx);
-            auto plotActivations = [&displays, fx, &plt](HexGrid* hg, RD_Sheet<double>& sheet) {
-                scalarfields(plt, displays[1], hg, { sheet.X });
-            };
-
-            for (auto &d: displays) {
-                d.resetDisplay(vector<double>(3, 0), vector<double>(3, 0), vector<double>(3, 0));
-                d.redrawDisplay();
-            }
-            Net.map();
-            Net.plotMap(displays[4]);
-            Net.stepAfferent(INTYPE);
-            Net.plotAfferent(displays[0], displays[3]);
-            Net.stepCortex(plotActivations);
-            Net.plotWeights(displays[2], 500);
-            for (size_t i = 0; i < displays.size(); i++) {
-                displays[i].redrawDisplay();
-                if (!outputPath.empty())
-                    displays[i].saveImage(StrFormat("%s/plot_%i_%i.png", outputPath, Net.time, i));
+                for (size_t i = 0; i < displays.size(); i++) {
+                    displays[i].redrawDisplay();
+                    if (!outputPath.empty())
+                        displays[i].saveImage(StrFormat("%s/plot_%i_%i.png", outputPath, Net.time, i));
+                }
             }
             for (auto &d: displays) d.closeDisplay();
         }
