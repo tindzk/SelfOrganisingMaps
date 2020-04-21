@@ -23,8 +23,8 @@ build/sim/gcal configs/config.json --seed=1 --mode=1 --input=2
 
 The final 3 numbers are:
 1. random seed
-2. Mode -- 0: displays-off, 1: displays-on, 2: map-only
-3. Training pattern type -- 0: oriented Gaussians, 1: preloaded vectors*, 2: videocamera input
+2. Mode -- 0: displays off, 1: displays on
+3. Training pattern type -- 0: oriented Gaussians, 1: preloaded vectors*, 2: video camera input
 
 *Note that if using preloaded vectors you will need to supply a hdf5 file as the "patterns" parameter in the JSON file. An example can be generated as follows:
 

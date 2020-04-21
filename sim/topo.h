@@ -301,33 +301,6 @@ inline void zero_X(RD_Sheet<Flt>& sheet) {
     for (size_t hi = 0; hi < sheet.nhex; ++hi) sheet.X[hi] = 0.;
 }
 
-template<class Flt>
-inline vector<Flt> activations(const RD_Sheet<Flt>& sheet) {
-    vector<Flt> result;
-    for (size_t i = 0; i < sheet.nhex; i++) result.push_back(sheet.X[i]);
-    return result;
-}
-
-template<class Flt>
-void renormalise(RD_Sheet<Flt>& sheet, const vector<size_t>& projections) {
-#pragma omp parallel for default(none) shared(projections) shared(sheet)
-    for (size_t i = 0; i < sheet.nhex; i++) {
-        Flt sumWeights = 0.0;
-
-        for (auto projectionId: projections) {
-            auto &p = sheet.Projections[projectionId];
-            for (size_t j = 0; j < p.connections.counts[i]; j++)
-                sumWeights += p.connections.weights[i * p.connections.nSrc + j];
-        }
-
-        for (auto projectionId: projections) {
-            auto &p = sheet.Projections[projectionId];
-            for (size_t j = 0; j < p.connections.counts[i]; j++)
-                p.connections.weights[i * p.connections.nSrc + j] /= sumWeights;
-        }
-    }
-}
-
 /**
  * Eqn. 2
  *
@@ -335,59 +308,57 @@ void renormalise(RD_Sheet<Flt>& sheet, const vector<size_t>& projections) {
  */
 template<class Flt>
 void sheetStep(RD_Sheet<Flt>& sheet, const vector<Projection<Flt>>& projections, Flt* gainControlWeights) {
+    //
     // Calculate activity patterns
+    //
+
     for (size_t pi = 0; pi < projections.size(); pi++) {
         auto& p = projections[pi];
 
-#pragma omp parallel for default(none) shared(sheet) shared(p) shared(pi) shared(gainControlWeights)
+        auto normalise = p.k != 1 && p.gamma_S != 0.;
+        assert(!normalise || gainControlWeights != NULL);
+
+#pragma omp parallel for default(none) shared(sheet) shared(p) shared(pi) shared(gainControlWeights) shared(normalise)
         for (size_t hi = 0; hi < sheet.nhex; hi++) {
             /* Dot product of each weight vector with the corresponding source sheet field values, multiplied by the
              * strength of the projection
              */
             auto activation = 0.;
-            // receptive field
-            for (size_t hj = 0; hj < p.connections.counts[hi]; hj++) {
-                auto afferentConnection = p.Xsrc[p.connections.srcId[hi * p.connections.nSrc + hj]];
-                activation += afferentConnection * p.connections.weights[hi * p.connections.nSrc + hj];
-            }
-            activation *= p.strength;
 
             // normalisation term for contrast-gain control
-            auto normalisation = 1.;
-            if (p.k != 1 && p.gamma_S != 0.) {
-                assert(gainControlWeights != NULL);
-                normalisation = 0.;
+            auto normalisation = normalise ? 0. : 1.;
+
+            for (size_t hj = 0; hj < p.connections.counts[hi]; hj++) {
+                // receptive field
+                auto afferentConnection = p.Xsrc[p.connections.srcId[hi * p.connections.nSrc + hj]];
+                activation += afferentConnection * p.connections.weights[hi * p.connections.nSrc + hj];
+
                 // suppressive field
-                for (size_t hj = 0; hj < p.connections.counts[hi]; hj++)
-                    normalisation += sheet.X[hi] * gainControlWeights[hi * p.connections.nSrc + hj];
-                normalisation *= p.gamma_S;
-                normalisation += p.k;
+                if (normalise) normalisation += sheet.X[hi] * gainControlWeights[hi * p.connections.nSrc + hj];
             }
 
-            sheet.fields[pi * sheet.nhex + hi] = activation / normalisation;
+            if (normalise) normalisation = normalisation * p.gamma_S + p.k;
+            sheet.fields[pi * sheet.nhex + hi] = (activation * p.strength) / normalisation;
         }
     }
 
     //
-    // Determine activation by summing up all projection fields
+    // Determine activation by summing up all projection fields and applying activation function
     //
 
-    // This must not be performed before calculating the activity patterns because `Xsrc` could contain self connections
-    // as in the case of the cortical sheet.
-    // Also, constrast-gain control needs to access previous activity.
-#pragma omp parallel for default(none) shared(sheet)
-    for (size_t hi = 0; hi < sheet.nhex; ++hi) sheet.X[hi] = 0.;
+#pragma omp parallel for default(none) shared(sheet) shared(projections)
+    for (size_t hi = 0; hi < sheet.nhex; ++hi) {
+        // This must not be performed before calculating the activity patterns because `Xsrc` could contain self
+        // connections as in the case of the cortical sheet.
+        // Also, constrast-gain control needs access to the previous activity.
+        sheet.X[hi] = 0.;
 
-    for (size_t pi = 0; pi < projections.size(); pi++) {
-#pragma omp parallel for default(none) shared(sheet) shared(pi)
-        for (size_t hi = 0; hi < sheet.nhex; ++hi)
+        for (size_t pi = 0; pi < projections.size(); pi++)
             sheet.X[hi] += sheet.fields[pi * sheet.nhex + hi];
-    }
 
-    // Corresponds to `f` in eqn. 2: half-wave rectifying activation function such that sheet.X[hi] >= 0
-#pragma omp parallel for default(none) shared(sheet)
-    for (size_t hi = 0; hi < sheet.nhex; ++hi)
+        // Corresponds to `f` in eqn. 2: half-wave rectifying activation function such that sheet.X[hi] >= 0
         sheet.X[hi] = fmax(sheet.X[hi] - sheet.theta[hi], 0.);
+    }
 }
 
 template<class Flt>
@@ -403,12 +374,11 @@ inline double hebbian(
         size_t i,
         size_t j
 ) {
-    auto omega_ij_p = p.connections.weights[i * p.connections.nSrc + j];
     auto alpha_p = p.alphas[i];
     auto eta_i = Xsrc[p.connections.srcId[i * p.connections.nSrc + j]];
     auto eta_j = Xdst[i];
 
-    return omega_ij_p + alpha_p * eta_j * eta_i;
+    return alpha_p * eta_j * eta_i;
 }
 
 /**
@@ -423,20 +393,32 @@ inline double hebbian(
  *
  * @param projections Subset of projections. In the case of V1, this allows excluding self connections.
  */
-void learn(RD_Sheet<double>& sheet, const vector<size_t> projections) {
-    for (auto projectionId: projections) {
-        auto &p = sheet.Projections[projectionId];
+void learn(RD_Sheet<double>& sheet, const vector<size_t>& projections) {
+#pragma omp parallel for default(none) shared(sheet) shared(projections)
+    for (size_t i = 0; i < sheet.nhex; i++) {
+        double sumWeights = 0.;
 
-#pragma omp parallel for default(none) shared(p) shared(sheet)
-        for (size_t i = 0; i < sheet.nhex; i++)
+        for (auto projectionId: projections) {
+            auto &p = sheet.Projections[projectionId];
+
+            for (size_t j = 0; j < p.connections.counts[i]; j++) {
+                if (p.alphas[i] > 0.0) {
+                    auto gradient = hebbian(p, p.Xsrc, sheet.X, i, j);
+                    p.connections.weights[i * p.connections.nSrc + j] += gradient;
+                }
+
+                sumWeights += p.connections.weights[i * p.connections.nSrc + j];
+            }
+        }
+
+        // From paper: "All afferent connection weights from RGC/LGN sheets are normalized together in the model, which
+        // allows V1 neurons to become selective for any subset of the RGC/LGN inputs."
+        for (auto projectionId: projections) {
+            auto &p = sheet.Projections[projectionId];
             for (size_t j = 0; j < p.connections.counts[i]; j++)
-                if (p.alphas[i] > 0.0) p.connections.weights[i * p.connections.nSrc + j] =
-                        hebbian(p, p.Xsrc, sheet.X, i, j);
+                p.connections.weights[i * p.connections.nSrc + j] /= sumWeights;
+        }
     }
-
-    // From paper: "All afferent connection weights from RGC/LGN sheets are normalized together in the model, which
-    // allows V1 neurons to become selective for any subset of the RGC/LGN inputs."
-    renormalise(sheet, projections);
 }
 
 template<class Flt>

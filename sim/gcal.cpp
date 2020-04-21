@@ -17,6 +17,7 @@ using absl::StrFormat;
 #include <absl/flags/parse.h>
 
 #include "topo.h"
+#include "plot.h"
 
 using namespace morph;
 
@@ -162,10 +163,6 @@ public:
             );
         LGN_ON.connect(projectionsLgnOn);
 
-        renormalise(LGN_ON, {0});
-        renormalise(LGN_ON, {1});
-        if (gainControl) renormalise(LGN_ON, {2 /* recurrent inhibitory projection */});
-
         // LGN OFF cells
         LGN_OFF.init(hgLgn->num());
         vector<Projection<double>> projectionsLgnOff = {
@@ -181,10 +178,6 @@ public:
             );
         LGN_OFF.connect(projectionsLgnOff);
 
-        renormalise(LGN_OFF, {0});
-        renormalise(LGN_OFF, {1});
-        if (gainControl) renormalise(LGN_OFF, {2 /* recurrent inhibitory projection */});
-
         // Cortex Sheet (V1)
         CX.init(hgCx->num(), {.beta = beta, .mu = mu, .lambda = lambda, .thetaInit = thetaInit});
         // k = 1, gamma_S = 0 because no contrast-gain control for V1
@@ -196,10 +189,6 @@ public:
             Projection<double>(CX.X, createConnectionField<double>(squaresCx, squaresCx, excitRadius, excitSigma, false), excitStrength, 1, 0, excitAlpha, true),
             Projection<double>(CX.X, createConnectionField<double>(squaresCx, squaresCx, inhibRadius, inhibSigma, true), inhibStrength, 1, 0, inhibAlpha, true)
         });
-
-        renormalise(CX, {0 /* LGN ON */, 1 /* LGN OFF */});
-        renormalise(CX, {2 /* recurrent excitatory projection */});
-        renormalise(CX, {3 /* recurrent inhibitory projection */});
 
         preferredOrientation.resize(CX.nhex, 0.);
         selectivity.resize(CX.nhex, 0.);
@@ -248,11 +237,8 @@ public:
         vector<double> fx(3, 0.);
         RD_Plot<double> plt(fx, fx, fx);
 
-        auto a = activations(IN);
-        plt.scalarfields(dispIn, hgIn, a, 0., 1.0);
-
-        vector<vector<double>> L = { activations(LGN_ON), activations(LGN_OFF) };
-        plt.scalarfields(dispLgn, hgLgn, L);
+        scalarfields(plt, dispIn, hgIn, { IN.X }, 0., 1.0);
+        scalarfields(plt, dispLgn, hgLgn, { LGN_ON.X, LGN_OFF.X });
     }
 
     /**
@@ -260,16 +246,14 @@ public:
      *
      * @param f called for every settling step with grid and activations
      */
-    void stepCortex(const std::function<void(HexGrid*, vector<double>&)> f) {
+    void stepCortex(const std::function<void(HexGrid*, RD_Sheet<double>&)> f) {
         zero_X(CX);  // Required because of CX's self connections
 
         // From paper: "Once all 16 settling steps are complete, the settled V1 activation pattern is deemed to be the
         // V1 response to the presented pattern."
         for (size_t j = 0; j < settleV1; j++) {
             sheetStep(CX, (double*) NULL);
-
-            auto a = activations(CX);
-            f(hgCx, a);
+            f(hgCx, CX);
         }
 
         // From paper: "V1 afferent connection weights [...] from the ON/OFF sheets are adjusted once per iteration
@@ -512,10 +496,11 @@ int main(int argc, char **argv) {
 
     switch (MODE) {
         case 0: { // No plotting
-            auto plotActivations = [](HexGrid*, vector<double>&) {};
-            for (size_t b = 0; b < nBlocks; b++) {
+            auto plotActivations = [](HexGrid*, RD_Sheet<double>&) {};
+            for (size_t b = 1; b <= nBlocks; b++) {
                 Net.map();
-                for (size_t i = 0; i < steps; i++) {
+                for (size_t i = 1; i <= steps; i++) {
+                    printf("Block %ld/%ld, step %ld/%ld\n", b, nBlocks, i, steps);
                     Net.stepAfferent(INTYPE);
                     Net.stepCortex(plotActivations);
                 }
@@ -535,18 +520,19 @@ int main(int argc, char **argv) {
 
             vector<double> fx(3, 0.);
             RD_Plot<double> plt(fx, fx, fx);
-            auto plotActivations = [&displays, fx, &plt](HexGrid* hg, vector<double>& X) {
-                plt.scalarfields(displays[1], hg, X);
+            auto plotActivations = [&displays, fx, &plt](HexGrid* hg, RD_Sheet<double>& sheet) {
+                scalarfields(plt, displays[1], hg, { sheet.X });
             };
 
             for (auto &d: displays) {
                 d.resetDisplay(vector<double>(3, 0), vector<double>(3, 0), vector<double>(3, 0));
                 d.redrawDisplay();
             }
-            for (size_t b = 0; b < nBlocks; b++) {
+            for (size_t b = 1; b <= nBlocks; b++) {
                 Net.map();
                 Net.plotMap(displays[4]);
-                for (size_t i = 0; i < steps; i++) {
+                for (size_t i = 1; i <= steps; i++) {
+                    printf("Block %ld/%ld, step %ld/%ld\n", b, nBlocks, i, steps);
                     Net.stepAfferent(INTYPE);
                     Net.plotAfferent(displays[0], displays[3]);
                     Net.stepCortex(plotActivations);
@@ -554,39 +540,11 @@ int main(int argc, char **argv) {
                 }
                 if (!outputPath.empty())
                     Net.save(StrFormat("%s/weights_%i.h5", outputPath, Net.time));
-            }
-            for (auto &d: displays) d.closeDisplay();
-        }
-            break;
-
-        case 2: { // Map only
-            vector<morph::Gdisplay> displays;
-            displays.push_back(morph::Gdisplay(600, 600, 0, 0, "Input Activity", 1.7, 0.0, 0.0));
-            displays.push_back(morph::Gdisplay(600, 600, 0, 0, "Cortical Activity", 1.7, 0.0, 0.0));
-            displays.push_back(morph::Gdisplay(1200, 400, 0, 0, "Cortical Projection", 1.7, 0.0, 0.0));
-            displays.push_back(morph::Gdisplay(600, 300, 0, 0, "LGN ON/OFF", 1.7, 0.0, 0.0));
-            displays.push_back(morph::Gdisplay(600, 600, 0, 0, "Map", 1.7, 0.0, 0.0));
-
-            vector<double> fx(3, 0.);
-            RD_Plot<double> plt(fx, fx, fx);
-            auto plotActivations = [&displays, fx, &plt](HexGrid* hg, vector<double>& X) {
-                plt.scalarfields(displays[1], hg, X);
-            };
-
-            for (auto &d: displays) {
-                d.resetDisplay(vector<double>(3, 0), vector<double>(3, 0), vector<double>(3, 0));
-                d.redrawDisplay();
-            }
-            Net.map();
-            Net.plotMap(displays[4]);
-            Net.stepAfferent(INTYPE);
-            Net.plotAfferent(displays[0], displays[3]);
-            Net.stepCortex(plotActivations);
-            Net.plotWeights(displays[2], 500);
-            for (size_t i = 0; i < displays.size(); i++) {
-                displays[i].redrawDisplay();
-                if (!outputPath.empty())
-                    displays[i].saveImage(StrFormat("%s/plot_%i_%i.png", outputPath, Net.time, i));
+                for (size_t i = 0; i < displays.size(); i++) {
+                    displays[i].redrawDisplay();
+                    if (!outputPath.empty())
+                        displays[i].saveImage(StrFormat("%s/plot_%i_%i.png", outputPath, Net.time, i));
+                }
             }
             for (auto &d: displays) d.closeDisplay();
         }

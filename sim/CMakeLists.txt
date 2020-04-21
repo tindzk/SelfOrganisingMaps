@@ -1,7 +1,7 @@
 # GCAL models based on Stevens et al. (2013) J. Neurosci.
 enable_language(CXX)
 
-add_executable(gcal gcal.cpp)
+add_executable(gcal gcal.cpp plot.cpp plot.h)
 target_compile_definitions(gcal PUBLIC FLT=float COMPILE_PLOTTING)
 
 # See /usr/lib/cmake/absl/abslTargets.cmake
