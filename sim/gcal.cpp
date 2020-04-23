@@ -311,8 +311,8 @@ public:
         disp.redrawDisplay();
     }
 
-    size_t modulationRatioBucketsCount = 20;
-    size_t modulationRatioBuckets[20] = {};
+    static const size_t modulationRatioBucketsCount = 15;
+    size_t modulationRatioBuckets[modulationRatioBucketsCount] = {};
     double modulationRatioMinimum = 0;
     double modulationRatioMaximum = 2.5;
     size_t modulationRatioBucketSize =
@@ -441,8 +441,10 @@ public:
     void printHistogram() {
         for (double mr = modulationRatioMinimum; mr <= modulationRatioMaximum; ) {
             auto bucket = (size_t) (mr * modulationRatioBucketSize);
-            printf("Modulation ratio %f - %f: %ld\n",
-                    mr, mr + modulationRatioStepSize, modulationRatioBuckets[bucket]);
+            size_t count = 20 * modulationRatioBuckets[bucket] / CX.nhex;
+            printf("Modulation ratio %f - %f: ", mr, mr + modulationRatioStepSize);
+            for (size_t i = 0; i < count; i++) printf("#");
+            printf("\n");
             mr += modulationRatioStepSize;
         }
     }
