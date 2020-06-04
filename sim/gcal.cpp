@@ -44,6 +44,9 @@ public:
     // preferred orientation [0, π] for each cortical unit
     vector<double> preferredOrientation;
 
+    // preferred phase for each cortical unit
+    vector<double> preferredPhase;
+
     // average orientation selectivity [0, 1] for each cortical unit
     vector<double> selectivity;
 
@@ -192,6 +195,8 @@ public:
 
         preferredOrientation.resize(CX.nhex, 0.);
         selectivity.resize(CX.nhex, 0.);
+
+        preferredPhase.resize(CX.nhex, 0.);
     }
 
     /**
@@ -278,17 +283,42 @@ public:
         plt.scalarfields(disp, hgCx, W);
     }
 
-    void plotMap(morph::Gdisplay disp) {
+    void plotOrientationMap(morph::Gdisplay& disp) {
         disp.resetDisplay(vector<double>(3, 0.), vector<double>(3, 0.), vector<double>(3, 0.));
 
-        int i = 0;
+        size_t i = 0;
         for (auto h : hgCx->hexen) {
             array<float, 3> cl = morph::Tools::HSVtoRGB(preferredOrientation[i] / M_PI, 1.0, selectivity[i]);
-            disp.drawHex(h.position(), array<float, 3>{0., 0., 0.}, (h.d * 0.5f), cl);
+            disp.drawHex(h.position(), array<float, 3>{0., 0., 0.}, h.d * 0.5f, cl);
+
             i++;
         }
+
         disp.redrawDisplay();
     }
+
+    void plotPhaseMap(morph::Gdisplay& disp) {
+        disp.resetDisplay(vector<double>(3, 0.), vector<double>(3, 0.), vector<double>(3, 0.));
+
+        size_t i = 0;
+        for (auto h : hgCx->hexen) {
+            array<float, 3> cl = morph::Tools::HSVtoRGB(preferredPhase[i] / (2 * M_PI), 1.0, 1.0);
+            disp.drawHex(h.position(), array<float, 3>{0., 0., 0.}, h.d * 0.5f, cl);
+
+            i++;
+        }
+
+        disp.redrawDisplay();
+    }
+
+    static const size_t modulationRatioBucketsCount = 15;
+    size_t modulationRatioBuckets[modulationRatioBucketsCount] = {};
+    double modulationRatioMinimum = 0;
+    double modulationRatioMaximum = 2.5;
+    size_t modulationRatioBucketSize =
+            modulationRatioBucketsCount / (modulationRatioMaximum - modulationRatioMinimum);
+    double modulationRatioStepSize =
+            (modulationRatioMaximum - modulationRatioMinimum) / modulationRatioBucketsCount;
 
     /**
      * Calculate preference map according to weighted average method described in Miikkulainen (2004), appendix G and
@@ -315,14 +345,15 @@ public:
         vector<double> sumVy(CX.nhex);
 
         // current orientation's maximum phase for each cortical unit
-        vector<double> maxPhaseTemp(CX.nhex, lowestDouble);
-
-        // maximum phase for each cortical unit across all orientations
-        // corresponds to eta^_phi in G.1.3
+        // corresponds to \hat{\eta}_\phi in G.1.3
         vector<double> maxPhase(CX.nhex, lowestDouble);
 
+        // Mean response of neurons
+        vector<double> sumResponses(CX.nhex, 0.);
+        vector<size_t> numResponses(CX.nhex, 0);
+
         for (size_t i = 0; i < numOrientations; i++) {
-            std::fill(maxPhaseTemp.begin(), maxPhaseTemp.end(), lowestDouble);
+            std::fill(maxPhase.begin(), maxPhase.end(), lowestDouble);
 
             // current test orientation
             // orientations are π-periodic
@@ -347,20 +378,26 @@ public:
                         (double*) NULL);
 
                 // Record peak responses for current orientation
-                for (size_t k = 0; k < CX.nhex; k++)
-                    maxPhaseTemp[k] = max(maxPhaseTemp[k], CX.X[k]);
+                for (size_t k = 0; k < CX.nhex; k++) {
+                    if (CX.X[k] > maxPhase[k]) {
+                        maxPhase[k] = CX.X[k];
+
+                        // Preferred phase of unit i as described by Antolík and Bednar (2011)
+                        preferredPhase[k] = phase;
+                    }
+
+                    sumResponses[k] += CX.X[k];
+                    numResponses[k]++;
+                }
             }
 
             for (size_t k = 0; k < CX.nhex; k++) {
                 // Calculate orientation preference vector "with peak response as the length and 2θ as its orientation"
                 // (Stevens et al., 2003).
                 // Use factor 2 because activations are calculated for π-periodic orientations.
-                sumVx[k] += maxPhaseTemp[k] * cos(2. * theta);
-                sumVy[k] += maxPhaseTemp[k] * sin(2. * theta);
+                sumVx[k] += maxPhase[k] * cos(2. * theta);
+                sumVy[k] += maxPhase[k] * sin(2. * theta);
             }
-
-            for (size_t k = 0; k < CX.nhex; k++)
-                maxPhase[k] = max(maxPhase[k], maxPhaseTemp[k]);
         }
 
         for (size_t i = 0; i < CX.nhex; i++) {
@@ -371,18 +408,45 @@ public:
 
             // Magnitude of summed vectors V (eqn. G.3)
             selectivity[i] = sqrt(sumVx[i] * sumVx[i] + sumVy[i] * sumVy[i]);
+
+            // Stevens et al. (2003, p. 7) use the maximum selectivity rather than the sum of selectivity values as in
+            // Miikkulainen (2004, p. 477).
+            // The maximum selectivity is calculated across all simulations (p. 7).
+            maxSelectivity = max(maxSelectivity, selectivity[i]);
+
+            // Calculate Modulation Ratio
+            // 2π / frequency of sine wave
+            auto period = 2. * M_PI / gratingWidth;
+            // First harmonic (fundamental frequency)
+            auto firstHarmonic = 1. / period;
+            // Mean of neuron responses
+            auto meanResponse = sumResponses[i] / numResponses[i];
+            auto modulationRatio = firstHarmonic / meanResponse;
+
+            // Prevent buffer overflows
+            modulationRatio = min(modulationRatio, modulationRatioMaximum);
+            auto bucket = (size_t) (modulationRatio * modulationRatioBucketSize);
+            modulationRatioBuckets[bucket]++;
         }
 
-        // Stevens et al. (2003, p. 7) use the maximum selectivity rather than the sum of selectivity values as in
-        // Miikkulainen (2004, p. 477).
-        // The maximum selectivity is calculated across all simulations (p. 7).
-        for (size_t j = 0; j < CX.nhex; j++) maxSelectivity = max(maxSelectivity, selectivity[j]);
+        printHistogram();
 
         // Calculate average orientation selectivity values
         // Eqn. G.3 (cont.)
         // The maximum selectivity is chosen instead of the sum of selectivity values such that selectivity[i] is in the
         // range [0, 1].
         for (size_t i = 0; i < CX.nhex; i++) selectivity[i] /= maxSelectivity;
+    }
+
+    void printHistogram() {
+        for (double mr = modulationRatioMinimum; mr <= modulationRatioMaximum; ) {
+            auto bucket = (size_t) (mr * modulationRatioBucketSize);
+            size_t count = 20 * modulationRatioBuckets[bucket] / CX.nhex;
+            printf("Modulation ratio %f - %f: ", mr, mr + modulationRatioStepSize);
+            for (size_t i = 0; i < count; i++) printf("#");
+            printf("\n");
+            mr += modulationRatioStepSize;
+        }
     }
 
     void save(const string filename) {
@@ -516,7 +580,8 @@ int main(int argc, char **argv) {
             displays.push_back(morph::Gdisplay(600, 600, 0, 0, "Cortical Activity", 1.7, 0.0, 0.0));
             displays.push_back(morph::Gdisplay(1200, 400, 0, 0, "Cortical Projection", 1.7, 0.0, 0.0));
             displays.push_back(morph::Gdisplay(600, 300, 0, 0, "LGN ON/OFF", 1.7, 0.0, 0.0));
-            displays.push_back(morph::Gdisplay(600, 600, 0, 0, "Map", 1.7, 0.0, 0.0));
+            displays.push_back(morph::Gdisplay(600, 600, 0, 0, "Orientation map", 1.7, 0.0, 0.0));
+            displays.push_back(morph::Gdisplay(600, 600, 0, 0, "Phase map", 1.7, 0.0, 0.0));
 
             vector<double> fx(3, 0.);
             RD_Plot<double> plt(fx, fx, fx);
@@ -530,7 +595,8 @@ int main(int argc, char **argv) {
             }
             for (size_t b = 1; b <= nBlocks; b++) {
                 Net.map();
-                Net.plotMap(displays[4]);
+                Net.plotOrientationMap(displays[4]);
+                Net.plotPhaseMap(displays[5]);
                 for (size_t i = 1; i <= steps; i++) {
                     printf("Block %ld/%ld, step %ld/%ld\n", b, nBlocks, i, steps);
                     Net.stepAfferent(INTYPE);
