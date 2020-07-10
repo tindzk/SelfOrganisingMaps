@@ -107,8 +107,11 @@ ConnectionField<Flt> createConnectionField(
             Flt distSquared = dx * dx + dy * dy;
             if (distSquared < radius * radius) {
                 Flt u = randomStrength ? morph::Tools::randDouble() : 1.;
+                // "(x, y) is the location of the presynaptic neuron" (p. 7)
+                Flt x = src[j].x;
+                Flt y = src[j].y;
                 result.weights[i * result.nSrc + result.counts[i]] =
-                        u * ((sigma <= 0.) ? 1. : exp(-distSquared / (2. * sigma * sigma)));
+                        u * ((sigma <= 0.) ? 1. : exp(-(x * x + y * y) / (2. * sigma * sigma)));
                 sum += result.weights[i * result.nSrc + result.counts[i]];
                 result.srcId[i * result.nSrc + result.counts[i]] = j;
                 result.counts[i]++;
@@ -146,8 +149,10 @@ Flt* createWeightsGainControl(
 
             Flt distSquared = dx * dx + dy * dy;
             if (distSquared < radius * radius) {
+                Flt x = src[j].x;
+                Flt y = src[j].y;
                 weights[i * src.size() + count] =
-                    (sigma <= 0.) ? 1. : exp(-distSquared / (2. * sigma * sigma));
+                    (sigma <= 0.) ? 1. : exp(-(x * x + y * y) / (2. * sigma * sigma));
                 count++;
             }
         }
